@@ -28,10 +28,10 @@ def main(cfg: DictConfig) -> None:
     set_random_seed(cfg.training.seed)
 
     # Create environment
-    env = make_env(cfg.training.seed, n_envs=cfg.training.num_envs, name=cfg.env.name)
+    env = make_env(cfg.training.seed, n_envs=cfg.training.num_envs, name=cfg.preset.env.name)
 
     # Create eval environment
-    eval_env = make_env(cfg.training.seed, n_envs=1, name=cfg.env.name)
+    eval_env = make_env(cfg.training.seed, n_envs=1, name=cfg.preset.env.name)
 
     # Setup callbacks
     eval_callback = EvalCallback(
@@ -45,14 +45,14 @@ def main(cfg: DictConfig) -> None:
     wandb_callback = WandbCallback()
 
     # Create model
-    method = METHOD_DICT[cfg.method.name]
-    del cfg.method.name
+    method = METHOD_DICT[cfg.preset.method.name]
+    del cfg.preset.method.name
     model = method(
         "MlpPolicy",
         env,
         verbose=1,
         tensorboard_log=f"runs/{run.id}",
-        **OmegaConf.to_container(cfg.method, resolve=True)
+        **OmegaConf.to_container(cfg.preset.method, resolve=True)
     )
 
     try:

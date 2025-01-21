@@ -1,0 +1,9 @@
+defaults:
+  - override hydra/launcher: joblib
+
+hydra:
+  job:
+    chdir: true
+
+logging:
+  project: "pref_rl"

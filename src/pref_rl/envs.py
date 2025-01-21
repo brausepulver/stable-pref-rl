@@ -5,10 +5,9 @@ import numpy as np
 import shimmy.dm_control_compatibility
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
-from hyphi_gym import named, register_envs, Monitor as HyphiMonitor
 
-register_envs()
 del shimmy.dm_control_compatibility
+_HYPHI_GYM_ENVS_REGISTERED = False
 
 
 class FlattenObservationWrapper(gym.ObservationWrapper):
@@ -27,11 +26,19 @@ class FlattenObservationWrapper(gym.ObservationWrapper):
         return obs
 
 
-def get_hyphi_gym_factory(record_video=False, **kwargs):
-  def factory() -> gym.Env:
-    return HyphiMonitor(gym.make(**kwargs), record_video=record_video)
+def get_hyphi_gym_factory(name: str, record_video=False, **kwargs):
+    global _HYPHI_GYM_ENVS_REGISTERED
 
-  return factory
+    from hyphi_gym import named, register_envs, Monitor as HyphiMonitor
+
+    if not _HYPHI_GYM_ENVS_REGISTERED:
+        register_envs()
+        _HYPHI_GYM_ENVS_REGISTERED = True
+
+    def factory() -> gym.Env:
+        return HyphiMonitor(gym.make(**named(name)), record_video=record_video)
+
+    return factory
 
 
 def get_dm_control_factory(name: str, seed: int, limit_ep_steps=1000, **kwargs):
@@ -75,7 +82,7 @@ def make_env(name: str, **kwargs):
     if name.startswith("metaworld"):
         return get_metaworld_factory(name, **kwargs)
 
-    return get_hyphi_gym_factory(**named(name), **kwargs)
+    return get_hyphi_gym_factory(name, **kwargs)
 
 
 def make_vec_env(seed: int, n_envs: int = 1, **kwargs):

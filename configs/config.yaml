@@ -1,20 +1,14 @@
 defaults:
-  - env: quadruped_walk
+  - default
+  - preset: ???
   - _self_
 
-hydra:
-  job:
-    chdir: true
-
-method: ${env.method}
-
 training:
-  total_timesteps: 1_000_000
   seed: 0
+  total_timesteps: 1_000_000
   num_envs: 16
 
 logging:
-  project: "pref_rl"
-  tags: ["baseline"]
+  tags: []
   checkpoint_freq: 100_000
   eval_freq: 10_000

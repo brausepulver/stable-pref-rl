@@ -1,4 +1,5 @@
-name: "dm_control/quadruped-walk-v0"
+env:
+  name: "dm_control/quadruped-walk-v0"
 
 method:
   name: "ppo"
