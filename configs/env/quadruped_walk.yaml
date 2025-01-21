@@ -1,0 +1,14 @@
+name: "dm_control/quadruped-walk-v0"
+
+method:
+  name: "ppo"
+  policy_kwargs:
+    net_arch:
+      pi: [256, 256, 256]
+      vf: [256, 256, 256]
+  learning_rate: 5.0e-5
+  batch_size: 128
+  ent_coef: 0
+  n_steps: 512
+  clip_range: 0.4
+  gae_lambda: 0.9
