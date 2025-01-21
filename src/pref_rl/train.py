@@ -1,5 +1,6 @@
 import hydra
 from omegaconf import DictConfig, OmegaConf
+import os
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.vec_env import VecNormalize
@@ -7,6 +8,11 @@ import wandb
 from wandb.integration.sb3 import WandbCallback
 from .envs import make_vec_env as make_env
 from .methods import METHOD_DICT
+
+
+CONFIG_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../configs")
+)
 
 
 def setup_wandb(cfg: DictConfig):
@@ -19,7 +25,7 @@ def setup_wandb(cfg: DictConfig):
     return run
 
 
-@hydra.main(config_path="../../configs", config_name="config", version_base="1.3")
+@hydra.main(config_path=CONFIG_DIR, config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # Setup WandB
     run = setup_wandb(cfg)
