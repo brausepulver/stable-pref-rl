@@ -1,13 +1,12 @@
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 import os
-from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.callbacks import EvalCallback, CallbackList
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.vec_env import VecNormalize
 import wandb
 from wandb.integration.sb3 import WandbCallback
 from .envs import make_vec_env as make_env
-from .methods import METHOD_DICT
 
 
 CONFIG_DIR = os.path.abspath(
@@ -51,21 +50,20 @@ def main(cfg: DictConfig) -> None:
     wandb_callback = WandbCallback()
 
     # Create model
-    method = METHOD_DICT[cfg.preset.method.name]
-    del cfg.preset.method.name
-    model = method(
+    model = hydra.utils.instantiate(
+        cfg.preset.method,
         "MlpPolicy",
         env,
         verbose=1,
         tensorboard_log=f"runs/{run.id}",
-        **OmegaConf.to_container(cfg.preset.method, resolve=True)
+        _convert_="all"
     )
 
     try:
         # Train model
         model.learn(
             total_timesteps=cfg.training.total_timesteps,
-            callback=[eval_callback, wandb_callback],
+            callback=CallbackList([eval_callback, wandb_callback]),
             progress_bar=True
         )
 

@@ -8,6 +8,7 @@ dependencies = [
     "tensorboard>=2.18.0",
     "tqdm>=4.67.1",
     "rich>=13.9.4",
+    "einops>=0.8.0",
 ]
 requires-python = ">=3.10"
 authors = [
@@ -17,15 +18,15 @@ readme = "README.md"
 
 [project.optional-dependencies]
 wandb = [
-    "wandb>=0.19.4"
+    "wandb>=0.19.4",
 ]
 b-pref = [
     "shimmy[dm-control]>=2.0.0",
-    "metaworld @ git+https://github.com/Farama-Foundation/Metaworld.git@master"
+    "metaworld @ git+https://github.com/Farama-Foundation/Metaworld.git@master",
 ]
 direct = [
     "bpy>=3.6.0",
-    "matplotlib>=3.5"
+    "matplotlib>=3.5",
 ]
 
 [project.scripts]

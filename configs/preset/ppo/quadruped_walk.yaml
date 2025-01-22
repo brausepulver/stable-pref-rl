@@ -2,7 +2,7 @@ env:
   name: "dm_control/quadruped-walk-v0"
 
 method:
-  name: "ppo"
+  _target_: stable_baselines3.PPO
   policy_kwargs:
     net_arch:
       pi: [256, 256, 256]

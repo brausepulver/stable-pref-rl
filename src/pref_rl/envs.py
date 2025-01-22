@@ -6,6 +6,7 @@ import shimmy.dm_control_compatibility
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
+
 del shimmy.dm_control_compatibility
 _HYPHI_GYM_ENVS_REGISTERED = False
 
@@ -73,7 +74,7 @@ def get_metaworld_factory(name: str, seed: int, **kwargs):
     return factory
 
 
-def make_env(name: str, **kwargs):
+def get_env_factory(name: str, **kwargs):
     """Create an environment."""
 
     if name.startswith("dm_control"):
@@ -88,4 +89,4 @@ def make_env(name: str, **kwargs):
 def make_vec_env(seed: int, n_envs: int = 1, **kwargs):
     """Create a vectorized environment."""
 
-    return DummyVecEnv([make_env(seed=seed + i, **kwargs) for i in range(n_envs)])
+    return DummyVecEnv([get_env_factory(seed=seed + i, **kwargs) for i in range(n_envs)])
