@@ -1,8 +1,8 @@
 import hydra
 from omegaconf import DictConfig
 import os
+from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList
-from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.vec_env import VecNormalize
 import wandb
 from wandb.integration.sb3 import WandbCallback
@@ -19,7 +19,7 @@ def setup_wandb(cfg: DictConfig):
         project=cfg.logging.project,
         tags=cfg.logging.tags,
         config=dict(cfg),
-        sync_tensorboard=True,
+        sync_tensorboard=True
     )
     return run
 
@@ -29,14 +29,11 @@ def main(cfg: DictConfig) -> None:
     # Setup WandB
     run = setup_wandb(cfg)
 
-    # Set random seed
-    set_random_seed(cfg.training.seed)
-
     # Create environment
-    env = make_env(cfg.training.seed, n_envs=cfg.training.num_envs, name=cfg.preset.env.name)
+    env = make_env(n_envs=cfg.training.num_envs, name=cfg.preset.env.name)
 
     # Create eval environment
-    eval_env = make_env(cfg.training.seed, n_envs=1, name=cfg.preset.env.name)
+    eval_env = make_env(name=cfg.preset.env.name)
 
     # Setup callbacks
     eval_callback = EvalCallback(
@@ -50,12 +47,14 @@ def main(cfg: DictConfig) -> None:
     wandb_callback = WandbCallback()
 
     # Create model
-    model = hydra.utils.instantiate(
+    model: BaseAlgorithm = hydra.utils.instantiate(
         cfg.preset.method,
         "MlpPolicy",
         env,
         verbose=1,
         tensorboard_log=f"runs/{run.id}",
+        seed=cfg.training.seed,
+        # Hydra arguments
         _convert_="all"
     )
 

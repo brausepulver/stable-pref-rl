@@ -27,7 +27,7 @@ class FlattenObservationWrapper(gym.ObservationWrapper):
         return obs
 
 
-def get_hyphi_gym_factory(name: str, record_video=False, **kwargs):
+def get_hyphi_gym_factory(name: str, record_video=False, render_mode=None):
     global _HYPHI_GYM_ENVS_REGISTERED
 
     from hyphi_gym import named, register_envs, Monitor as HyphiMonitor
@@ -37,15 +37,14 @@ def get_hyphi_gym_factory(name: str, record_video=False, **kwargs):
         _HYPHI_GYM_ENVS_REGISTERED = True
 
     def factory() -> gym.Env:
-        return HyphiMonitor(gym.make(**named(name)), record_video=record_video)
+        return HyphiMonitor(gym.make(render_mode=render_mode, **named(name)), record_video=record_video)
 
     return factory
 
 
-def get_dm_control_factory(name: str, seed: int, limit_ep_steps=1000, **kwargs):
+def get_dm_control_factory(name: str, limit_ep_steps=1000, render_mode=None):
     def factory() -> gym.Env:
-        env = gym.make(name, render_mode='rgb_array')
-        env.reset(seed=seed)
+        env = gym.make(name, render_mode=render_mode)
         env = FlattenObservationWrapper(env)
         env = TimeLimit(env, limit_ep_steps)
         env = Monitor(env)
@@ -54,18 +53,15 @@ def get_dm_control_factory(name: str, seed: int, limit_ep_steps=1000, **kwargs):
     return factory
 
 
-def get_metaworld_factory(name: str, seed: int, **kwargs):
+def get_metaworld_factory(name: str, render_mode=None):
     def factory() -> gym.Env:
         env_cls = _env_dict.ALL_V2_ENVIRONMENTS[name]
-        env = env_cls(render_mode='rgb_array')
+        env = env_cls(render_mode=render_mode)
         env._freeze_rand_vec = False
         env._set_task_called = True
 
         if env.spec is None:
             env.spec = gym.envs.registration.EnvSpec(id=name)
-
-        env.seed(seed)
-        env.action_space.seed(seed)
 
         env = TimeLimit(env, env.max_path_length)
         env = Monitor(env)
@@ -86,7 +82,7 @@ def get_env_factory(name: str, **kwargs):
     return get_hyphi_gym_factory(name, **kwargs)
 
 
-def make_vec_env(seed: int, n_envs: int = 1, **kwargs):
+def make_vec_env(n_envs: int = 1, **kwargs):
     """Create a vectorized environment."""
 
-    return DummyVecEnv([get_env_factory(seed=seed + i, **kwargs) for i in range(n_envs)])
+    return DummyVecEnv([get_env_factory(**kwargs) for i in range(n_envs)])
