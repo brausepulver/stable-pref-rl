@@ -13,7 +13,7 @@ method:
   ent_coef: 0
   n_steps: 512
   clip_range:
-    _target_: pref_rl.utils.LinearSchedule
+    _target_: pref_rl.config.LinearSchedule
     start: 0.4
     end: 0.2
   gae_lambda: 0.9

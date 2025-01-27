@@ -10,8 +10,9 @@ method:
     n_epochs_unsuper: 50
 
   pref:
-    feed_type: 1
     n_steps_reward: 32_000
+    ann_buffer_size: 100
+    feed_type: 1
     segment_size: 50
     max_feed: 2_000
     feed_batch_size: 200
