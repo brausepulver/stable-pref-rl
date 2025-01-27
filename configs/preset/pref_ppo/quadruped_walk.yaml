@@ -16,7 +16,7 @@ method:
     max_feed: 2_000
     feed_batch_size: 200
 
-    n_epochs_reward: 10
+    n_epochs_reward: 1
     learning_rate_reward: 3.e-4
     reward_model_kwargs:
       net_arch: [256, 256, 256]

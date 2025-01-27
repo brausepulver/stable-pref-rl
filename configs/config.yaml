@@ -10,5 +10,6 @@ training:
 
 logging:
   tags: []
+  group: null
   checkpoint_freq: 100_000
   eval_freq: 10_000

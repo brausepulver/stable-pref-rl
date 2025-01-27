@@ -17,6 +17,7 @@ CONFIG_DIR = os.path.abspath(
 def setup_wandb(cfg: DictConfig):
     run = wandb.init(
         project=cfg.logging.project,
+        group=cfg.logging.group,
         tags=cfg.logging.tags,
         config=dict(cfg),
         sync_tensorboard=True
@@ -30,10 +31,10 @@ def main(cfg: DictConfig) -> None:
     run = setup_wandb(cfg)
 
     # Create environment
-    env = make_env(n_envs=cfg.training.num_envs, name=cfg.preset.env.name)
+    env = make_env(n_envs=cfg.training.num_envs, **cfg.preset.env)
 
     # Create eval environment
-    eval_env = make_env(name=cfg.preset.env.name)
+    eval_env = make_env(**cfg.preset.env)
 
     # Setup callbacks
     eval_callback = EvalCallback(
@@ -54,6 +55,7 @@ def main(cfg: DictConfig) -> None:
         verbose=1,
         tensorboard_log=f"runs/{run.id}",
         seed=cfg.training.seed,
+        stats_window_size=env.num_envs,
         # Hydra arguments
         _convert_="all"
     )
@@ -63,7 +65,8 @@ def main(cfg: DictConfig) -> None:
         model.learn(
             total_timesteps=cfg.training.total_timesteps,
             callback=CallbackList([eval_callback, wandb_callback]),
-            progress_bar=True
+            progress_bar=True,
+            log_interval=1
         )
 
         # Save final model

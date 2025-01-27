@@ -1,5 +1,6 @@
 env:
   name: "dm_control/quadruped-walk-v0"
+  limit_ep_steps: 500
 
 method:
   _target_: stable_baselines3.PPO
@@ -11,5 +12,8 @@ method:
   batch_size: 128
   ent_coef: 0
   n_steps: 512
-  clip_range: 0.4
+  clip_range:
+    _target_: pref_rl.utils.LinearSchedule
+    start: 0.4
+    end: 0.2
   gae_lambda: 0.9
