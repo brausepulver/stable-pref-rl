@@ -160,20 +160,25 @@ class PrefCallback(BaseCallback):
         self.logger.record('reward_model/accuracy', np.mean(batch_accuracies))
 
 
-    def _store_pred_rewards(self, pred_rewards, rewards):
+    def _predict_rewards(self, state_actions: torch.Tensor):
+        pred_rewards = self.reward_model(state_actions)
+
         for env_idx in range(len(pred_rewards)):
             pred_reward = pred_rewards[env_idx].item()
 
-            rewards[env_idx] = pred_reward  # We cannot modify the reference in self.locals['rewards'] directly
             self.pred_reward_buffer[env_idx] = pred_reward
+            self.locals['rewards'][env_idx] = pred_reward  # We cannot modify the reference in self.locals['rewards'] directly
 
 
-    def _update_ep_info(self, infos, ep_pred_rewards):
+    def _log_pred_reward(self, infos):
         for env_idx, info in enumerate(infos):
-            if ep_info := info.get('episode'):
-                ep_mean_pred_r = np.mean(ep_pred_rewards[env_idx])
-                ep_info['pred_r'] = ep_mean_pred_r
-                ep_pred_rewards[env_idx] = []
+            ep_info = info.get('episode')
+            if ep_info is None:
+                continue
+
+            ep_mean_pred_r = np.mean(self.pred_reward_buffer[env_idx])
+            ep_info['pred_r'] = ep_mean_pred_r
+            self.pred_reward_buffer[env_idx] = []
 
 
     def _on_step(self):
@@ -194,10 +199,9 @@ class PrefCallback(BaseCallback):
             self._train_reward_model()
 
         with torch.no_grad():
-            pred_rewards = self.reward_model(state_actions)
-            self._store_pred_rewards(pred_rewards, self.locals['rewards'])
+            self._predict_rewards(state_actions)
 
-        self._update_ep_info(self.locals['infos'], self.pred_reward_buffer)
+        self._log_pred_reward(self.locals['infos'])
 
         return True
 
