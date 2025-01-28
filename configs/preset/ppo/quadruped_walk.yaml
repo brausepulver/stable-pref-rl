@@ -9,9 +9,9 @@ method:
       pi: [256, 256, 256]
       vf: [256, 256, 256]
   learning_rate: 5.0e-5
-  batch_size: 128
+  batch_size: 100
   ent_coef: 0
-  n_steps: 512
+  n_steps: 500
   clip_range:
     _target_: pref_rl.config.LinearSchedule
     start: 0.4

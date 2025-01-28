@@ -6,6 +6,7 @@ from stable_baselines3.common.callbacks import BaseCallback, EventCallback, Call
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+from types import SimpleNamespace
 
 
 class RewardModel(nn.Module):
@@ -24,7 +25,7 @@ class RewardModel(nn.Module):
 
     def forward(self, x):
         out = torch.cat([member(x) for member in self.members], dim=-1)
-        return out.mean(dim=-1), out.std(dim=-1)
+        return SimpleNamespace(value=out.mean(dim=-1), uncertainty=out.std(dim=-1))
 
 
 class EpisodeBuffer():
@@ -62,6 +63,8 @@ class PrefCallback(BaseCallback):
 
 
     def _init_callback(self):
+        self.annotation_buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size)
+
         self.observation_size = self.training_env.observation_space.shape[0]
         self.action_size = self.training_env.action_space.shape[0]
 
@@ -75,10 +78,6 @@ class PrefCallback(BaseCallback):
         self.preference_buffer = torch.empty((0,), dtype=torch.long)
 
         self.num_feed = 0
-
-
-    def _on_training_start(self):
-        self.annotation_buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size)
 
 
     def _on_rollout_start(self):
@@ -113,8 +112,8 @@ class PrefCallback(BaseCallback):
 
         elif self.sampler == 'disagreement':
             with torch.no_grad():
-                _, uncertainties = self.reward_model(state_actions)
-                _, largest_std_indices = torch.topk(uncertainties.sum(dim=-1), num_samples, dim=0)
+                uncertainties = self.reward_model(state_actions).uncertainty
+                largest_std_indices = torch.topk(uncertainties.sum(dim=-1), num_samples, dim=0).indices
 
                 return state_actions[largest_std_indices], gt_rewards[largest_std_indices].squeeze()
 
@@ -159,7 +158,7 @@ class PrefCallback(BaseCallback):
             for segments, preferences in dataloader:
                 self.rew_optimizer.zero_grad()
 
-                pred_rewards, _ = self.reward_model(segments)
+                pred_rewards = self.reward_model(segments).value
                 pred_returns = einops.reduce(pred_rewards, 'b n s -> b n', 'sum')
 
                 loss = self.rew_loss(pred_returns, preferences)
@@ -176,13 +175,13 @@ class PrefCallback(BaseCallback):
 
 
     def _predict_rewards(self, state_actions: torch.Tensor):
-        pred_rewards, _ = self.reward_model(state_actions)
+        pred_rewards = self.reward_model(state_actions).value
 
         for env_idx in range(len(pred_rewards)):
             pred_reward = pred_rewards[env_idx].item()
 
-            self.pred_reward_buffer[env_idx] = pred_reward
             self.locals['rewards'][env_idx] = pred_reward  # We cannot modify the reference in self.locals['rewards'] directly
+            self.pred_reward_buffer[env_idx].append(pred_reward)
 
 
     def _log_pred_reward(self, infos):
@@ -222,44 +221,82 @@ class PrefCallback(BaseCallback):
 
 
     def _on_rollout_end(self):
-        if len(self.model.ep_info_buffer) == 0:
-            return
+        ep_pred_rew = [ep_info['pred_r'] for ep_info in self.model.ep_info_buffer if 'pred_r' in ep_info]
 
-        ep_pred_rew_mean = np.mean([ep_info['pred_r'] for ep_info in self.model.ep_info_buffer])
-        self.logger.record('reward_model/ep_pred_rew_mean', ep_pred_rew_mean)
+        if ep_pred_rew:
+            self.logger.record('reward_model/ep_pred_rew_mean', np.mean(ep_pred_rew))
 
 
-class UnsupervisedPretrainingCallback(EventCallback):
+class UnsuperCallback(EventCallback):
     def __init__(self, *args, n_steps_unsuper=32_000, n_epochs_unsuper=50, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.n_steps_unsuper = n_steps_unsuper
         self.n_epochs_unsuper = n_epochs_unsuper
 
+        self._num_neighbors = 5
+
 
     def _init_callback(self):
-        self.n_epochs_model = self.model.getattr('n_epochs')
+        self.n_epochs_model = getattr(self.model, 'n_epochs', None)
         self.model.n_epochs = self.n_epochs_unsuper
+
+        self._buffer = deque(maxlen=self.n_steps_unsuper)
+
+
+    def _on_rollout_start(self):
+        self.intr_reward_buffer = []
+        self.callback.on_rollout_start()
+
+
+    def _estimate_state_entropy(self, obs: torch.Tensor):
+        all_obs = einops.rearrange(torch.stack(list(self._buffer)), 'n e d -> (n e) d')
+        differences = obs.unsqueeze(1) - all_obs
+
+        distances = torch.norm(differences, dim=-1)
+        neighbor_dist = torch.kthvalue(distances, self._num_neighbors + 1, dim=-1).values
+
+        return neighbor_dist.log()
 
 
     def _on_step(self):
-        if self.num_timesteps <= self.n_steps_unsuper:
+        if self.num_timesteps > self.n_steps_unsuper:
+            self.model.n_epochs = self.n_epochs_model
+            self._on_event()
             return True
 
-        self._on_event()
+        obs = torch.tensor(self.model._last_obs, dtype=torch.float32)
+        self._buffer.append(obs)
+
+        state_entropy = self._estimate_state_entropy(obs)
+
+        for env_idx in range(len(self.locals['rewards'])):
+            self.locals['rewards'][env_idx] = state_entropy[env_idx]
+
+        self.intr_reward_buffer.extend(state_entropy)
+
+        return True
+
+
+    def _on_rollout_end(self):
+        if self.intr_reward_buffer:
+            self.logger.record('pretrain/intr_rew_mean', np.mean(self.intr_reward_buffer))
+
+        self.callback.on_rollout_end()
 
 
 class PrefPPO(PPO):
     def __init__(self, *args, unsuper={}, pref={}, **kwargs):
         super().__init__(*args, **kwargs)
-        self.pref_callback = PrefCallback(**pref)
+        self.unsuper = unsuper
+        self.pref = pref
 
 
     def learn(self, *args, callback=None, **kwargs):
-        callback = ([callback] if callback is not None else []) + [self.pref_callback]
+        pref_callback = PrefCallback(**self.pref)
+        unsuper_callback = UnsuperCallback(callback=pref_callback, **self.unsuper)
+
+        callback = ([callback] if callback is not None else []) + [unsuper_callback]
         callback = CallbackList(callback)
+
         return super().learn(*args, callback=callback, **kwargs)
-
-
-    def _excluded_save_params(self):
-        return ["pref_callback"] + super()._excluded_save_params()
