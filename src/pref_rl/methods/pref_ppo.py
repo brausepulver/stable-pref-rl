@@ -60,6 +60,7 @@ class PrefCallback(BaseCallback):
         self.lr_reward = learning_rate_reward
 
         self.pre_sample_multiplier = 10
+        self.feed_validation_batch_size = self.feed_batch_size
 
 
     def _init_callback(self):
@@ -119,30 +120,47 @@ class PrefCallback(BaseCallback):
 
 
     def _query_segments(self, left: torch.Tensor, right: torch.Tensor, left_rew: torch.Tensor, right_rew: torch.Tensor):
-        return left_rew.sum(dim=-1) < right_rew.sum(dim=-1)
+        return (left_rew.sum(dim=-1) < right_rew.sum(dim=-1)).to(dtype=torch.long)
 
 
-    def _expand_data(self):
-        num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
+    def _generate_data(self, num_samples: int):
         segments, gt_rewards = self._sample_segments(num_samples)
 
         left, right = einops.rearrange(segments, '(n1 n2) s d -> n1 n2 s d', n1=2)
         left_rew, right_rew = einops.rearrange(gt_rewards, '(n1 n2) s -> n1 n2 s', n1=2)
 
+        segments = torch.stack([left, right], dim=1)
         preferences = self._query_segments(left, right, left_rew, right_rew)
 
-        self.segment_buffer = torch.cat([self.segment_buffer, torch.stack([left, right], dim=1)])
+        return segments, preferences
+
+
+    def _expand_data(self):
+        num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
+        segments, preferences = self._generate_data(num_samples)
+
+        self.segment_buffer = torch.cat([self.segment_buffer, segments])
         self.preference_buffer = torch.cat([self.preference_buffer, preferences])
 
         self.num_feed += num_samples
         self.logger.record('reward_model/num_feed', self.num_feed)
 
 
-    def _calculate_accuracy(self, pred_returns, preferences):
+    def _calculate_accuracy(self, pred_returns: torch.Tensor, preferences: torch.Tensor):
         pred_preferences = torch.argmax(pred_returns, dim=1)
 
         correct = (pred_preferences == preferences).float()
         return correct.mean().item()
+
+
+    def _compute_reward_model_loss(self, segments: torch.Tensor, preferences: torch.Tensor):
+        pred_rewards = self.reward_model(segments).value
+        pred_returns = einops.reduce(pred_rewards, 'b n s -> b n', 'sum')
+
+        loss = self.rew_loss(pred_returns, preferences)
+        accuracy = self._calculate_accuracy(pred_returns, preferences)
+
+        return loss, accuracy
 
 
     def _train_reward_model(self):
@@ -158,20 +176,29 @@ class PrefCallback(BaseCallback):
             for segments, preferences in dataloader:
                 self.rew_optimizer.zero_grad()
 
-                pred_rewards = self.reward_model(segments).value
-                pred_returns = einops.reduce(pred_rewards, 'b n s -> b n', 'sum')
-
-                loss = self.rew_loss(pred_returns, preferences)
-                accuracy = self._calculate_accuracy(pred_returns, preferences)
-
+                loss, accuracy = self._compute_reward_model_loss(segments, preferences)
                 loss.backward()
                 self.rew_optimizer.step()
 
                 batch_losses.append(loss.item())
                 batch_accuracies.append(accuracy)
 
-        self.logger.record('reward_model/loss', np.mean(batch_losses))
-        self.logger.record('reward_model/accuracy', np.mean(batch_accuracies))
+        self.logger.record('reward_model/train/loss', np.mean(batch_losses))
+        self.logger.record('reward_model/train/accuracy', np.mean(batch_accuracies))
+
+
+    def _validate_reward_model(self):
+        self.reward_model.eval()
+
+        data = self._generate_data(self.feed_validation_batch_size)
+        dataset = TensorDataset(*data)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
+
+        batch_statistics = [self._compute_reward_model_loss(*batch) for batch in dataloader]
+        batch_losses, batch_accuracies = zip(*batch_statistics)
+
+        self.logger.record('reward_model/eval/loss', np.mean(batch_losses))
+        self.logger.record('reward_model/eval/accuracy', np.mean(batch_accuracies))
 
 
     def _predict_rewards(self, state_actions: torch.Tensor):
@@ -211,6 +238,9 @@ class PrefCallback(BaseCallback):
         if self.num_timesteps % self.n_steps_reward == 0 and self.num_feed < self.max_feed:
             self._expand_data()
             self._train_reward_model()
+
+            with torch.no_grad():
+                self._validate_reward_model()
 
         with torch.no_grad():
             self._predict_rewards(state_actions)
