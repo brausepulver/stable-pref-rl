@@ -233,9 +233,13 @@ class PrefCallback(BaseCallback):
         gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float32).unsqueeze(-1)
         annotations = torch.cat([state_actions, gt_rewards], dim=-1)
 
+        buffer_empty = len(self.annotation_buffer.episodes) == 0
         self.annotation_buffer.add(annotations, self.locals['dones'])
 
-        if self.num_timesteps % self.n_steps_reward == 0 and self.num_feed < self.max_feed:
+        checkpoint_reached = self.num_timesteps % self.n_steps_reward == 0
+        feedback_left = self.num_feed < self.max_feed
+
+        if checkpoint_reached and feedback_left and not buffer_empty:
             self._expand_data()
             self._train_reward_model()
 
@@ -264,7 +268,7 @@ class UnsuperCallback(EventCallback):
         self.n_steps_unsuper = n_steps_unsuper
         self.n_epochs_unsuper = n_epochs_unsuper
 
-        self._num_neighbors = 5
+        self.n_neighbors = 5
 
 
     def _init_callback(self):
@@ -284,7 +288,7 @@ class UnsuperCallback(EventCallback):
         differences = obs.unsqueeze(1) - all_obs
 
         distances = torch.norm(differences, dim=-1)
-        neighbor_dist = torch.kthvalue(distances, self._num_neighbors + 1, dim=-1).values
+        neighbor_dist = torch.kthvalue(distances, self.n_neighbors + 1, dim=-1).values
 
         return neighbor_dist.log()
 
