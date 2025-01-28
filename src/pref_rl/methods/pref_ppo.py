@@ -2,8 +2,7 @@ from collections import deque
 import einops
 import numpy as np
 from stable_baselines3 import PPO
-from stable_baselines3.common.buffers import ReplayBuffer
-from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from stable_baselines3.common.callbacks import BaseCallback, EventCallback, CallbackList
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -24,7 +23,8 @@ class RewardModel(nn.Module):
 
 
     def forward(self, x):
-        return torch.cat([member(x) for member in self.members], dim=-1).mean(dim=-1)
+        out = torch.cat([member(x) for member in self.members], dim=-1)
+        return out.mean(dim=-1), out.std(dim=-1)
 
 
 class EpisodeBuffer():
@@ -44,11 +44,12 @@ class EpisodeBuffer():
 
 
 class PrefCallback(BaseCallback):
-    def __init__(self, n_steps_reward=32_000, ann_buffer_size=100, feed_type=1, segment_size=50, max_feed=2_000, feed_batch_size=200, n_epochs_reward=10, learning_rate_reward=3e-4, batch_size_reward=128, reward_model_kwargs={}, teacher={'beta': -1, 'gamma': 1, 'eps_mistake': 0, 'eps_skip': 0, 'eps_equal': 0}, **kwargs):
+    def __init__(self, n_steps_reward=32_000, ann_buffer_size=100, sampler='uniform', segment_size=50, max_feed=2_000, feed_batch_size=200, n_epochs_reward=10, learning_rate_reward=3e-4, batch_size_reward=128, reward_model_kwargs={}, teacher={'beta': -1, 'gamma': 1, 'eps_mistake': 0, 'eps_skip': 0, 'eps_equal': 0}, **kwargs):
         super().__init__(**kwargs)
 
         self.n_steps_reward = n_steps_reward
         self.ann_buffer_size = ann_buffer_size
+        self.sampler = sampler
         self.segment_size = segment_size
         self.max_feed = max_feed
         self.feed_batch_size = feed_batch_size
@@ -56,6 +57,8 @@ class PrefCallback(BaseCallback):
         self.batch_size_reward = batch_size_reward
         self.reward_model_kwargs = reward_model_kwargs
         self.lr_reward = learning_rate_reward
+
+        self.pre_sample_multiplier = 10
 
 
     def _init_callback(self):
@@ -86,7 +89,9 @@ class PrefCallback(BaseCallback):
         episodes = self.annotation_buffer.episodes
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
 
-        ep_indices = torch.randint(0, len(valid_episodes), (num_samples,))
+        num_samples_expanded = num_samples if self.sampler == 'uniform' else self.pre_sample_multiplier * self.feed_batch_size
+        ep_indices = torch.randint(0, len(valid_episodes), (num_samples_expanded,))
+
         segments = []
 
         for ep_idx in ep_indices:
@@ -101,7 +106,17 @@ class PrefCallback(BaseCallback):
             segments.append(segment)
 
         obs, act, gt_rewards = torch.split(torch.stack(segments), (self.observation_size, self.action_size, 1), dim=-1)
-        return torch.cat([obs, act], dim=-1), gt_rewards.squeeze()
+        state_actions = torch.cat([obs, act], dim=-1)
+
+        if self.sampler == 'uniform':
+            return state_actions, gt_rewards.squeeze()
+
+        elif self.sampler == 'disagreement':
+            with torch.no_grad():
+                _, uncertainties = self.reward_model(state_actions)
+                _, largest_std_indices = torch.topk(uncertainties.sum(dim=-1), num_samples, dim=0)
+
+                return state_actions[largest_std_indices], gt_rewards[largest_std_indices].squeeze()
 
 
     def _query_segments(self, left: torch.Tensor, right: torch.Tensor, left_rew: torch.Tensor, right_rew: torch.Tensor):
@@ -144,7 +159,7 @@ class PrefCallback(BaseCallback):
             for segments, preferences in dataloader:
                 self.rew_optimizer.zero_grad()
 
-                pred_rewards = self.reward_model(segments)
+                pred_rewards, _ = self.reward_model(segments)
                 pred_returns = einops.reduce(pred_rewards, 'b n s -> b n', 'sum')
 
                 loss = self.rew_loss(pred_returns, preferences)
@@ -161,7 +176,7 @@ class PrefCallback(BaseCallback):
 
 
     def _predict_rewards(self, state_actions: torch.Tensor):
-        pred_rewards = self.reward_model(state_actions)
+        pred_rewards, _ = self.reward_model(state_actions)
 
         for env_idx in range(len(pred_rewards)):
             pred_reward = pred_rewards[env_idx].item()
@@ -212,6 +227,26 @@ class PrefCallback(BaseCallback):
 
         ep_pred_rew_mean = np.mean([ep_info['pred_r'] for ep_info in self.model.ep_info_buffer])
         self.logger.record('reward_model/ep_pred_rew_mean', ep_pred_rew_mean)
+
+
+class UnsupervisedPretrainingCallback(EventCallback):
+    def __init__(self, *args, n_steps_unsuper=32_000, n_epochs_unsuper=50, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.n_steps_unsuper = n_steps_unsuper
+        self.n_epochs_unsuper = n_epochs_unsuper
+
+
+    def _init_callback(self):
+        self.n_epochs_model = self.model.getattr('n_epochs')
+        self.model.n_epochs = self.n_epochs_unsuper
+
+
+    def _on_step(self):
+        if self.num_timesteps <= self.n_steps_unsuper:
+            return True
+
+        self._on_event()
 
 
 class PrefPPO(PPO):
