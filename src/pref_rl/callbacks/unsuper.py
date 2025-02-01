@@ -1,14 +1,13 @@
 from collections import deque
 import einops
 import numpy as np
-from stable_baselines3.common.callbacks import EventCallback
+from stable_baselines3.common.callbacks import BaseCallback
 import torch
 
 
-class UnsuperCallback(EventCallback):
+class UnsuperCallback(BaseCallback):
     def __init__(self, *args, n_steps_unsuper=32_000, n_epochs_unsuper=50, **kwargs):
         super().__init__(*args, **kwargs)
-
         self.n_steps_unsuper = n_steps_unsuper
         self.n_epochs_unsuper = n_epochs_unsuper
 
@@ -24,7 +23,6 @@ class UnsuperCallback(EventCallback):
 
     def _on_rollout_start(self):
         self.intr_reward_buffer = []
-        self.callback.on_rollout_start()
 
 
     def _estimate_state_entropy(self, obs: torch.Tensor):
@@ -40,7 +38,6 @@ class UnsuperCallback(EventCallback):
     def _on_step(self):
         if self.num_timesteps > self.n_steps_unsuper:
             self.model.n_epochs = self.n_epochs_model
-            self._on_event()
             return True
 
         obs = torch.tensor(self.model._last_obs, dtype=torch.float32)
@@ -59,5 +56,3 @@ class UnsuperCallback(EventCallback):
     def _on_rollout_end(self):
         if self.intr_reward_buffer:
             self.logger.record('pretrain/intr_rew_mean', np.mean(self.intr_reward_buffer))
-
-        self.callback.on_rollout_end()

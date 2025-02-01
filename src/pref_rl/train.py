@@ -1,5 +1,5 @@
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import os
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList
@@ -19,7 +19,7 @@ def setup_wandb(cfg: DictConfig):
         project=cfg.logging.project,
         group=cfg.logging.group,
         tags=cfg.logging.tags,
-        config=dict(cfg),
+        config=OmegaConf.to_container(cfg, resolve=True),
         sync_tensorboard=True
     )
     return run
@@ -66,7 +66,7 @@ def main(cfg: DictConfig) -> None:
             total_timesteps=cfg.training.total_timesteps,
             callback=CallbackList([eval_callback, wandb_callback]),
             progress_bar=True,
-            log_interval=1
+            log_interval=cfg.preset.logging.log_freq_rollouts
         )
 
         # Save final model

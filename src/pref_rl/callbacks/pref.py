@@ -51,7 +51,8 @@ class PrefCallback(BaseCallback):
         segment_size: int = 50,
         max_feed: int = 2_000,
         feed_batch_size: int = 200,
-        n_epochs_reward: int = 10,
+        n_epochs_reward: int = 100,
+        train_acc_threshold_reward: float = 0.97,
         learning_rate_reward: float = 3e-4,
         batch_size_reward: int = 128,
         reward_model_kwargs: dict = {},
@@ -67,12 +68,12 @@ class PrefCallback(BaseCallback):
         self.max_feed = max_feed
         self.feed_batch_size = feed_batch_size
         self.n_epochs_reward = n_epochs_reward
+        self.train_acc_threshold_reward = train_acc_threshold_reward
         self.batch_size_reward = batch_size_reward
         self.reward_model_kwargs = reward_model_kwargs
         self.lr_reward = learning_rate_reward
 
         self.pre_sample_multiplier = 10
-        self.feed_validation_batch_size = self.feed_batch_size
 
 
     def _init_callback(self):
@@ -97,12 +98,12 @@ class PrefCallback(BaseCallback):
         self.pred_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
 
 
-    def _sample_segments(self, num_samples: int):
+    def _sample_segments(self, num_samples: int, sampler: str):
         episodes = self.annotation_buffer.episodes
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
 
-        num_samples_expanded = num_samples if self.sampler == 'uniform' else self.pre_sample_multiplier * self.feed_batch_size
-        ep_indices = torch.randint(0, len(valid_episodes), (num_samples_expanded,))
+        num_samples_expanded = num_samples if sampler == 'uniform' else self.pre_sample_multiplier * self.feed_batch_size
+        ep_indices = torch.randint(0, len(valid_episodes), (2 * num_samples_expanded,))
 
         segments = []
 
@@ -120,10 +121,10 @@ class PrefCallback(BaseCallback):
         obs, act, gt_rewards = torch.split(torch.stack(segments), (self.observation_size, self.action_size, 1), dim=-1)
         state_actions = torch.cat([obs, act], dim=-1)
 
-        if self.sampler == 'uniform':
+        if sampler == 'uniform':
             return state_actions, gt_rewards.squeeze()
 
-        elif self.sampler == 'disagreement':
+        elif sampler == 'disagreement':
             with torch.no_grad():
                 uncertainties = self.reward_model(state_actions).uncertainty
                 largest_std_indices = torch.topk(uncertainties.sum(dim=-1), num_samples, dim=0).indices
@@ -135,8 +136,8 @@ class PrefCallback(BaseCallback):
         return (left_rew.sum(dim=-1) < right_rew.sum(dim=-1)).to(dtype=torch.long)
 
 
-    def _generate_data(self, num_samples: int):
-        segments, gt_rewards = self._sample_segments(num_samples)
+    def _generate_data(self, num_samples: int, sampler: str):
+        segments, gt_rewards = self._sample_segments(num_samples, sampler)
 
         left, right = einops.rearrange(segments, '(n1 n2) s d -> n1 n2 s d', n1=2)
         left_rew, right_rew = einops.rearrange(gt_rewards, '(n1 n2) s -> n1 n2 s', n1=2)
@@ -149,7 +150,7 @@ class PrefCallback(BaseCallback):
 
     def _expand_data(self):
         num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
-        segments, preferences = self._generate_data(num_samples)
+        segments, preferences = self._generate_data(num_samples, self.sampler)
 
         self.segment_buffer = torch.cat([self.segment_buffer, segments])
         self.preference_buffer = torch.cat([self.preference_buffer, preferences])
@@ -184,7 +185,9 @@ class PrefCallback(BaseCallback):
         batch_losses = []
         batch_accuracies = []
 
-        for _ in range(self.n_epochs_reward):
+        for epoch in range(self.n_epochs_reward):
+            batch_acc_epoch = []
+
             for segments, preferences in dataloader:
                 self.rew_optimizer.zero_grad()
 
@@ -193,16 +196,22 @@ class PrefCallback(BaseCallback):
                 self.rew_optimizer.step()
 
                 batch_losses.append(loss.item())
-                batch_accuracies.append(accuracy)
+                batch_acc_epoch.append(accuracy)
+
+            batch_accuracies.extend(batch_acc_epoch)
+
+            if np.mean(batch_acc_epoch) > self.train_acc_threshold_reward:
+                break
 
         self.logger.record('reward_model/train/loss', np.mean(batch_losses))
         self.logger.record('reward_model/train/accuracy', np.mean(batch_accuracies))
+        self.logger.record('reward_model/train/epochs', epoch + 1)
 
 
     def _validate_reward_model(self):
         self.reward_model.eval()
 
-        data = self._generate_data(self.feed_validation_batch_size)
+        data = self._generate_data(len(self.segment_buffer), 'uniform')
         dataset = TensorDataset(*data)
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
 
@@ -245,11 +254,11 @@ class PrefCallback(BaseCallback):
         gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float32).unsqueeze(-1)
         annotations = torch.cat([state_actions, gt_rewards], dim=-1)
 
-        buffer_empty = len(self.annotation_buffer.episodes) == 0
         self.annotation_buffer.add(annotations, self.locals['dones'])
 
         checkpoint_reached = self.num_timesteps % self.n_steps_reward == 0
         feedback_left = self.num_feed < self.max_feed
+        buffer_empty = len(self.annotation_buffer.episodes) == 0
 
         if checkpoint_reached and feedback_left and not buffer_empty:
             self._expand_data()

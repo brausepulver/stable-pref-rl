@@ -4,7 +4,7 @@ import metaworld.envs.mujoco.env_dict as _env_dict
 import numpy as np
 import shimmy.dm_control_compatibility
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 
 del shimmy.dm_control_compatibility
@@ -82,7 +82,12 @@ def get_env_factory(name: str, **kwargs):
     return get_hyphi_gym_factory(name, **kwargs)
 
 
-def make_vec_env(n_envs: int = 1, **kwargs):
+def make_vec_env(n_envs: int = 1, normalize: bool = False, **kwargs):
     """Create a vectorized environment."""
 
-    return DummyVecEnv([get_env_factory(**kwargs) for i in range(n_envs)])
+    env = DummyVecEnv([get_env_factory(**kwargs) for i in range(n_envs)])
+
+    if normalize:
+        env = VecNormalize(env, norm_reward=False)
+
+    return env

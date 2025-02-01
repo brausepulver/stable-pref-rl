@@ -1,5 +1,11 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-seed="0,1,2,3,4,5,6,7,8,9"
-
-python -m train preset=ppo/quadruped_walk training.seed="$seed" "$@" --multirun
+for seed in $(seq 0 16 144); do
+    echo "Running with seed ${seed}"
+    train \
+        preset=ppo/quadruped_walk \
+        training.total_timesteps=2000000 \
+        training.seed=${seed} \
+        'logging.tags=[baseline, ppo]' \
+        logging.group="ppo_baseline"
+done
