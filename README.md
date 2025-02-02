@@ -5,7 +5,7 @@
 Tested with Python 3.10.
 
 ```sh
-pip -e '.[wandb,b-pref,direct]'
+pip install -e '.[wandb,b-pref,direct]'
 ```
 
 Install hyphi_gym manually due to version conflict of pinned dependency:

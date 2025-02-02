@@ -4,8 +4,8 @@ import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
-from types import SimpleNamespace
 
 
 class RewardModel(nn.Module):
@@ -22,9 +22,12 @@ class RewardModel(nn.Module):
         ))
 
 
+    def forward_members(self, x):
+        return torch.cat([member(x) for member in self.members], dim=-1)
+
+
     def forward(self, x):
-        out = torch.cat([member(x) for member in self.members], dim=-1)
-        return SimpleNamespace(value=out.mean(dim=-1), uncertainty=out.std(dim=-1))
+        return self.forward_members(x).mean(dim=-1)
 
 
 class EpisodeBuffer():
@@ -121,15 +124,22 @@ class PrefCallback(BaseCallback):
         obs, act, gt_rewards = torch.split(torch.stack(segments), (self.observation_size, self.action_size, 1), dim=-1)
         state_actions = torch.cat([obs, act], dim=-1)
 
+        left_right = einops.rearrange(state_actions, '(n1 n2) s d -> n1 n2 s d', n1=2)
+        left_right_rew = einops.rearrange(gt_rewards, '(n1 n2) s 1 -> n1 n2 s', n1=2)
+
         if sampler == 'uniform':
-            return state_actions, gt_rewards.squeeze()
+            return left_right, left_right_rew
 
         elif sampler == 'disagreement':
             with torch.no_grad():
-                uncertainties = self.reward_model(state_actions).uncertainty
-                largest_std_indices = torch.topk(uncertainties.sum(dim=-1), num_samples, dim=0).indices
+                member_rewards = self.reward_model.forward_members(left_right)
+                member_returns = einops.reduce(member_rewards, 'n1 n2 s m -> n1 n2 m', 'sum')
 
-                return state_actions[largest_std_indices], gt_rewards[largest_std_indices].squeeze()
+                preference_std = F.softmax(member_returns, dim=0).std(dim=-1)
+                greatest_std_idx = torch.topk(preference_std, num_samples, dim=1).indices
+
+                batch_idx = torch.arange(left_right.shape[0]).unsqueeze(-1)
+                return left_right[batch_idx, greatest_std_idx], left_right_rew[batch_idx, greatest_std_idx]
 
 
     def _query_segments(self, left: torch.Tensor, right: torch.Tensor, left_rew: torch.Tensor, right_rew: torch.Tensor):
@@ -137,10 +147,7 @@ class PrefCallback(BaseCallback):
 
 
     def _generate_data(self, num_samples: int, sampler: str):
-        segments, gt_rewards = self._sample_segments(num_samples, sampler)
-
-        left, right = einops.rearrange(segments, '(n1 n2) s d -> n1 n2 s d', n1=2)
-        left_rew, right_rew = einops.rearrange(gt_rewards, '(n1 n2) s -> n1 n2 s', n1=2)
+        (left, right), (left_rew, right_rew) = self._sample_segments(num_samples, sampler)
 
         segments = torch.stack([left, right], dim=1)
         preferences = self._query_segments(left, right, left_rew, right_rew)
@@ -167,7 +174,7 @@ class PrefCallback(BaseCallback):
 
 
     def _compute_reward_model_loss(self, segments: torch.Tensor, preferences: torch.Tensor):
-        pred_rewards = self.reward_model(segments).value
+        pred_rewards = self.reward_model(segments)
         pred_returns = einops.reduce(pred_rewards, 'b n s -> b n', 'sum')
 
         loss = self.rew_loss(pred_returns, preferences)
@@ -223,7 +230,7 @@ class PrefCallback(BaseCallback):
 
 
     def _predict_rewards(self, state_actions: torch.Tensor):
-        pred_rewards = self.reward_model(state_actions).value
+        pred_rewards = self.reward_model(state_actions)
 
         for env_idx in range(len(pred_rewards)):
             pred_reward = pred_rewards[env_idx].item()
@@ -248,7 +255,6 @@ class PrefCallback(BaseCallback):
 
         obs = torch.tensor(self.model._last_obs, dtype=torch.float32)
         act = torch.tensor(self.locals['actions'], dtype=torch.float32)
-
         state_actions = torch.cat([obs, act], dim=-1)
 
         gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float32).unsqueeze(-1)

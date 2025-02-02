@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 for seed in $(seq 0 16 144); do
     echo "Running with seed ${seed}"
