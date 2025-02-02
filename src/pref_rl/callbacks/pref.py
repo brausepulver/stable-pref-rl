@@ -59,7 +59,8 @@ class PrefCallback(EventCallback):
         learning_rate_reward: float = 3e-4,
         batch_size_reward: int = 128,
         reward_model_kwargs: dict = {},
-        teacher: dict = {'beta': -1, 'gamma': 1, 'eps_mistake': 0, 'eps_skip': 0, 'eps_equal': 0},
+        teacher: str = None,
+        teacher_kwargs: dict = {},
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -77,6 +78,15 @@ class PrefCallback(EventCallback):
         self.lr_reward = learning_rate_reward
 
         self.pre_sample_multiplier = 10
+        self.teacher_kwargs = {
+            'beta': teacher_kwargs.get('beta', 1 if teacher == 'stoc' else float('inf')),
+            'gamma': teacher_kwargs.get('gamma', 0.9 if teacher == 'myopic' else 1),
+            'eps_mistake': teacher_kwargs.get('eps_mistake', 0.1 if teacher == 'mistake' else 0),
+            'eps_equal': teacher_kwargs.get('eps_equal'),
+            'eps_skip': teacher_kwargs.get('eps_skip')
+        }
+        self.threshold_equal = 0
+        self.threshold_skip = 0
 
 
     def _init_callback(self):
@@ -101,6 +111,14 @@ class PrefCallback(EventCallback):
         self.pred_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
 
 
+    def _update_thresholds(self):
+        ep_lens, ep_rets = zip(*[(len(ep), sum(ep)) for ep in self.annotation_buffer.episodes])
+        margin = np.mean(ep_rets) * self.segment_size / np.mean(ep_lens)
+
+        self.threshold_equal = margin * self.teacher_kwargs['eps_equal']
+        self.threshold_skip = margin * self.teacher_kwargs['eps_skip']
+
+
     def _sample_segments(self, num_samples: int, sampler: str):
         episodes = self.annotation_buffer.episodes
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
@@ -109,7 +127,6 @@ class PrefCallback(EventCallback):
         ep_indices = torch.randint(0, len(valid_episodes), (2 * num_samples_expanded,))
 
         segments = []
-
         for ep_idx in ep_indices:
             ep = valid_episodes[ep_idx]
 
@@ -118,45 +135,60 @@ class PrefCallback(EventCallback):
 
             step_indices = start_step + offsets
             segment = ep[step_indices]
-
             segments.append(segment)
 
         obs, act, gt_rewards = torch.split(torch.stack(segments), (self.observation_size, self.action_size, 1), dim=-1)
         state_actions = torch.cat([obs, act], dim=-1)
 
-        left_right = einops.rearrange(state_actions, '(n1 n2) s d -> n1 n2 s d', n1=2)
-        left_right_rew = einops.rearrange(gt_rewards, '(n1 n2) s 1 -> n1 n2 s', n1=2)
+        split_state_actions = einops.rearrange(state_actions, '(n1 n2) s d -> n1 n2 s d', n2=2)
+        split_rewards = einops.rearrange(gt_rewards, '(n1 n2) s 1 -> n2 n1 s', n2=2)
 
         if sampler == 'uniform':
-            return left_right, left_right_rew
+            return split_state_actions, split_rewards
 
         elif sampler in ('disagree', 'entropy'):
             with torch.no_grad():
-                member_rewards = self.reward_model.forward_members(left_right)
+                member_rewards = self.reward_model.forward_members(split_state_actions)
                 member_returns = einops.reduce(member_rewards, 'n1 n2 s m -> n1 n2 m', 'sum')
-                probabilities = F.softmax(member_returns, dim=0)
+                probabilities = F.softmax(member_returns, dim=1)
 
                 if sampler == 'disagree':
-                    metric = probabilities[0].std(dim=-1)
+                    metric = probabilities[:, 0].std(dim=-1)
                 elif sampler == 'entropy':
-                    entropy = -torch.sum(probabilities * torch.log(probabilities), dim=0)
+                    entropy = -torch.sum(probabilities * torch.log(probabilities), dim=1)
                     metric = entropy.mean(dim=-1)
 
                 idx = torch.topk(metric, num_samples).indices
-                return left_right[:, idx], left_right_rew[:, idx]
+                return split_state_actions[idx], split_rewards[:, idx]
 
 
-    def _query_segments(self, left: torch.Tensor, right: torch.Tensor, left_rew: torch.Tensor, right_rew: torch.Tensor):
-        return (left_rew.sum(dim=-1) < right_rew.sum(dim=-1)).to(dtype=torch.long)
+    def _query_segments(self, gt_rewards: torch.Tensor):
+        myopia_exp = torch.arange(self.segment_size - 1, -1, -1)
+        myopia_coef = torch.tensor(self.teacher_kwargs['gamma']).pow(myopia_exp)
+        myopic_rewards = myopia_coef * gt_rewards
+
+        returns = myopic_rewards.sum(dim=-1)
+        left_ret, right_ret = returns
+
+        if self.teacher_kwargs['beta'] == float('inf'):
+            preferences = (left_ret < right_ret).to(dtype=torch.long)
+        else:
+            probabilities = F.softmax(returns, dim=0)
+            preferences = torch.bernoulli(probabilities[0]).to(dtype=torch.long)
+
+        equal_indices = torch.argwhere(torch.abs(left_ret - right_ret) < self.threshold_equal).squeeze(-1)
+        preferences[equal_indices] = 0.5
+
+        keep_indices = torch.argwhere(torch.min(torch.abs(returns) >= self.threshold_skip, dim=0).values).squeeze(-1)
+        preferences = preferences[keep_indices]
+
+        return preferences, keep_indices
 
 
     def _generate_data(self, num_samples: int, sampler: str):
-        (left, right), (left_rew, right_rew) = self._sample_segments(num_samples, sampler)
-
-        segments = torch.stack([left, right], dim=1)
-        preferences = self._query_segments(left, right, left_rew, right_rew)
-
-        return segments, preferences
+        state_actions, gt_rewards = self._sample_segments(num_samples, sampler)
+        preferences, keep_indices = self._query_segments(gt_rewards)
+        return state_actions[keep_indices], preferences
 
 
     def _expand_data(self):
@@ -166,7 +198,7 @@ class PrefCallback(EventCallback):
         self.segment_buffer = torch.cat([self.segment_buffer, segments])
         self.preference_buffer = torch.cat([self.preference_buffer, preferences])
 
-        self.num_feed += num_samples
+        self.num_feed += len(segments)
         self.logger.record('reward_model/num_feed', self.num_feed)
 
 
@@ -265,6 +297,9 @@ class PrefCallback(EventCallback):
         annotations = torch.cat([state_actions, gt_rewards], dim=-1)
 
         self.annotation_buffer.add(annotations, self.locals['dones'])
+
+        if self.locals['dones'].any():
+            self._update_thresholds()
 
         checkpoint_reached = self.num_timesteps % self.n_steps_reward == 0
         feedback_left = self.num_feed < self.max_feed

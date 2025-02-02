@@ -21,9 +21,10 @@ method:
       output_fn:
         _target_: torch.nn.Tanh
 
-    teacher:
-      beta: -1
+    teacher: oracle
+    teacher_kwargs:
+      beta: .inf
       gamma: 1
       eps_mistake: 0
-      eps_skip: 0
       eps_equal: 0
+      eps_skip: 0
