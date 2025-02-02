@@ -130,16 +130,20 @@ class PrefCallback(BaseCallback):
         if sampler == 'uniform':
             return left_right, left_right_rew
 
-        elif sampler == 'disagreement':
+        elif sampler in ('disagree', 'entropy'):
             with torch.no_grad():
                 member_rewards = self.reward_model.forward_members(left_right)
                 member_returns = einops.reduce(member_rewards, 'n1 n2 s m -> n1 n2 m', 'sum')
+                probabilities = F.softmax(member_returns, dim=0)
 
-                preference_std = F.softmax(member_returns, dim=0).std(dim=-1)
-                greatest_std_idx = torch.topk(preference_std, num_samples, dim=1).indices
+                if sampler == 'disagree':
+                    metric = probabilities[0].std(dim=-1)
+                elif sampler == 'entropy':
+                    entropy = -torch.sum(probabilities * torch.log(probabilities), dim=0)
+                    metric = entropy.mean(dim=-1)
 
-                batch_idx = torch.arange(left_right.shape[0]).unsqueeze(-1)
-                return left_right[batch_idx, greatest_std_idx], left_right_rew[batch_idx, greatest_std_idx]
+                idx = torch.topk(metric, num_samples).indices
+                return left_right[:, idx], left_right_rew[:, idx]
 
 
     def _query_segments(self, left: torch.Tensor, right: torch.Tensor, left_rew: torch.Tensor, right_rew: torch.Tensor):
