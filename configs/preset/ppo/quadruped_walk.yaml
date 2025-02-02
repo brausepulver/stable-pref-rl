@@ -1,7 +1,6 @@
-env:
-  name: "dm_control/quadruped-walk-v0"
-  limit_ep_steps: 1000
-  normalize: true
+defaults:
+  - /envs/quadruped_walk@env
+  - _self_
 
 method:
   _target_: stable_baselines3.PPO

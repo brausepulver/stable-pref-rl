@@ -1,0 +1,7 @@
+defaults:
+  - /preset/sac/quadruped_walk@_here_
+  - /preset/pref/quadruped_walk@_here_
+  - _self_
+
+method:
+  _target_: pref_rl.methods.pebble.PEBBLE

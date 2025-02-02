@@ -1,0 +1,5 @@
+defaults:
+  - /envs/quadruped_walk@env
+
+method:
+  _target_: stable_baselines3.SAC

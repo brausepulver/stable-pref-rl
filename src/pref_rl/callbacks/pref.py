@@ -1,7 +1,7 @@
 from collections import deque
 import einops
 import numpy as np
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import EventCallback
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,7 +46,7 @@ class EpisodeBuffer():
             episode.clear()
 
 
-class PrefCallback(BaseCallback):
+class PrefCallback(EventCallback):
     def __init__(self,
         n_steps_reward: int = 32_000,
         ann_buffer_size: int = 100,
@@ -257,11 +257,11 @@ class PrefCallback(BaseCallback):
     def _on_step(self):
         self.reward_model.eval()
 
-        obs = torch.tensor(self.model._last_obs, dtype=torch.float32)
-        act = torch.tensor(self.locals['actions'], dtype=torch.float32)
+        obs = torch.tensor(self.model._last_obs, dtype=torch.float)
+        act = torch.tensor(self.locals['actions'], dtype=torch.float)
         state_actions = torch.cat([obs, act], dim=-1)
 
-        gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float32).unsqueeze(-1)
+        gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float).unsqueeze(-1)
         annotations = torch.cat([state_actions, gt_rewards], dim=-1)
 
         self.annotation_buffer.add(annotations, self.locals['dones'])
@@ -273,15 +273,14 @@ class PrefCallback(BaseCallback):
         if checkpoint_reached and feedback_left and not buffer_empty:
             self._expand_data()
             self._train_reward_model()
-
             with torch.no_grad():
                 self._validate_reward_model()
+            self._on_event()
 
         with torch.no_grad():
             self._predict_rewards(state_actions)
 
         self._log_pred_reward(self.locals['infos'])
-
         return True
 
 

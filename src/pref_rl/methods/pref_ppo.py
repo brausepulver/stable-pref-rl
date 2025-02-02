@@ -12,10 +12,7 @@ class PrefPPO(PPO):
 
 
     def learn(self, *args, callback=None, **kwargs):
-        pref_callback = PrefCallback(**self.pref)
-        unsuper_callback = UnsuperCallback(**self.unsuper)
+        callbacks = [PrefCallback(**self.pref), UnsuperCallback(**self.unsuper)]
+        callback_list = CallbackList(([callback] if callback is not None else []) + callbacks)
 
-        callback = ([callback] if callback is not None else []) + [pref_callback, unsuper_callback]
-        callback = CallbackList(callback)
-
-        return super().learn(*args, callback=callback, **kwargs)
+        return super().learn(*args, callback=callback_list, **kwargs)

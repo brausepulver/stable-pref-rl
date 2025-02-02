@@ -1,0 +1,29 @@
+method:
+  unsuper:
+    n_steps_unsuper: 32_000
+    n_epochs_unsuper: 50
+
+  pref:
+    n_steps_reward: 32_000
+    ann_buffer_size: 100
+    sampler: entropy
+    segment_size: 50
+    max_feed: 2_000
+    feed_batch_size: 200
+
+    n_epochs_reward: 100
+    train_acc_threshold_reward: 0.97
+    learning_rate_reward: 3.e-4
+    reward_model_kwargs:
+      net_arch: [256, 256, 256]
+      activation_fn:
+        _target_: torch.nn.LeakyReLU
+      output_fn:
+        _target_: torch.nn.Tanh
+
+    teacher:
+      beta: -1
+      gamma: 1
+      eps_mistake: 0
+      eps_skip: 0
+      eps_equal: 0

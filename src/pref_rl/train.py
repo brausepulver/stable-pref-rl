@@ -62,11 +62,12 @@ def main(cfg: DictConfig) -> None:
 
     try:
         # Train model
+        log_freq_rollouts = cfg.preset.get('logging', {}).get('log_freq_rollouts')
         model.learn(
             total_timesteps=cfg.training.total_timesteps,
             callback=CallbackList([eval_callback, wandb_callback]),
             progress_bar=True,
-            log_interval=cfg.preset.logging.log_freq_rollouts
+            **({'log_interval': log_freq_rollouts} if log_freq_rollouts else {})
         )
 
         # Save final model
