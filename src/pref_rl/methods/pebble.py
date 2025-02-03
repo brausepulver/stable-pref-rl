@@ -6,14 +6,21 @@ from ..callbacks.unsuper import UnsuperCallback
 
 
 class PEBBLECallback(BaseCallback):
+    def __init__(self, relabel_batch_size: int = 62_500, **kwargs):
+        super().__init__(**kwargs)
+        self.relabel_batch_size = relabel_batch_size
+
+
     def _on_step(self):
         replay_buffer = self.model.replay_buffer
 
-        obs, act = torch.tensor(replay_buffer.observations, dtype=torch.float), torch.tensor(replay_buffer.observations, dtype=torch.float)
+        obs, act = torch.tensor(replay_buffer.observations, dtype=torch.float), torch.tensor(replay_buffer.actions, dtype=torch.float)
         state_actions = torch.cat([obs, act], dim=-1)
+        n_chunks = state_actions.shape[0] // self.relabel_batch_size
 
-        pred_rewards = self.parent.reward_model(state_actions)
-        self.model.replay_buffer.rewards = pred_rewards.numpy()
+        with torch.no_grad():
+            pred_rewards = torch.cat([self.parent.reward_model(batch) for batch in state_actions.chunk(n_chunks)])
+            self.model.replay_buffer.rewards = pred_rewards.numpy()
 
 
 class PEBBLE(SAC):

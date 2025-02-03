@@ -150,6 +150,7 @@ class PrefCallback(EventCallback):
             with torch.no_grad():
                 member_rewards = self.reward_model.forward_members(split_state_actions)
                 member_returns = einops.reduce(member_rewards, 'n1 n2 s m -> n1 n2 m', 'sum')
+
                 probabilities = F.softmax(member_returns, dim=1)
 
                 if sampler == 'disagree':
@@ -188,6 +189,7 @@ class PrefCallback(EventCallback):
     def _generate_data(self, num_samples: int, sampler: str):
         state_actions, gt_rewards = self._sample_segments(num_samples, sampler)
         preferences, keep_indices = self._query_segments(gt_rewards)
+
         return state_actions[keep_indices], preferences
 
 
