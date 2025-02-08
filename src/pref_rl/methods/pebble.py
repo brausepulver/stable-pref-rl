@@ -16,9 +16,9 @@ class PEBBLECallback(BaseCallback):
 
         obs, act = torch.tensor(replay_buffer.observations, dtype=torch.float), torch.tensor(replay_buffer.actions, dtype=torch.float)
         state_actions = torch.cat([obs, act], dim=-1)
-        n_chunks = state_actions.shape[0] // self.relabel_batch_size
 
         with torch.no_grad():
+            n_chunks = state_actions.shape[0] // self.relabel_batch_size
             pred_rewards = torch.cat([self.parent.reward_model(batch) for batch in state_actions.chunk(n_chunks)])
             self.model.replay_buffer.rewards = pred_rewards.numpy()
 

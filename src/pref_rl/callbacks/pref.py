@@ -180,7 +180,7 @@ class PrefCallback(EventCallback):
         equal_indices = torch.argwhere(torch.abs(left_ret - right_ret) < self.threshold_equal).squeeze(-1)
         preferences[equal_indices] = 0.5
 
-        keep_indices = torch.argwhere(torch.min(torch.abs(returns) >= self.threshold_skip, dim=0).values).squeeze(-1)
+        keep_indices = torch.argwhere(torch.max(torch.abs(returns) >= self.threshold_skip, dim=0).values).squeeze(-1)
         preferences = preferences[keep_indices]
 
         return preferences, keep_indices
