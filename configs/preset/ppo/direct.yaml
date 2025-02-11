@@ -1,0 +1,5 @@
+env:
+  name: "HoleyGrid"
+
+method:
+  _target_: stable_baselines3.PPO

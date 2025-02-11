@@ -1,0 +1,15 @@
+defaults:
+  - default
+  - preset: ???
+  - _self_
+
+training:
+  seed: 0
+  total_timesteps: 196_608  # 4 envs x 2048 steps x 24 rollouts
+  num_envs: 4
+
+logging:
+  tags: []
+  group: null
+  checkpoint_freq: 65_538
+  eval_freq: 16_384

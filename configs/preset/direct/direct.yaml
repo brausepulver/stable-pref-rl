@@ -1,0 +1,19 @@
+defaults:
+  - /preset/ppo/direct@_here_
+  - _self_
+
+method:
+  _target_: pref_rl.methods.direct.DIRECT
+
+  direct:
+    si_buffer_size_steps: 32
+
+    n_epochs_disc: 10  # Equivalent to \omega = 1.0 at SB3 PPO defaults
+    learning_rate_disc: 2e-4
+    batch_size_disc: 8192
+    disc_kwargs:
+      net_arch: [32, 32]
+      activation_fn:
+        _target_: torch.nn.ReLU
+
+    reward_mixture_coef: 0.5
