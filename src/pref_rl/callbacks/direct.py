@@ -161,6 +161,8 @@ class DIRECTCallback(RewardModifierCallback):
         buffer_empty = len(self.si_buffer.episodes) == 0
 
         if checkpoint_reached and not buffer_empty:
+            self.logger.record('direct/buffer/n_updates', self.si_buffer.n_updates)
+            self.logger.record('direct/buffer/ep_rew_mean', np.mean([ret for ret, _, _ in self.si_buffer.episodes]))
             self._train_discriminator()
 
         return super()._on_step()
