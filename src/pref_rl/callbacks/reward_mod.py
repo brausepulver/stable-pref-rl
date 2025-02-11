@@ -10,6 +10,13 @@ class RewardModifierCallback(EventCallback):
         self.log_prefix = log_prefix
 
 
+    def _get_current_step(self):
+        obs = torch.tensor(self.model._last_obs, dtype=torch.float).reshape(self.training_env.num_envs, -1)
+        act = torch.tensor(self.locals['actions'], dtype=torch.float).reshape(self.training_env.num_envs, -1)
+        gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float).reshape(self.training_env.num_envs, -1)
+        return obs, act, gt_rewards
+
+
     def _on_rollout_start(self):
         self.pred_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
 

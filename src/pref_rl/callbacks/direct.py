@@ -1,24 +1,9 @@
 import einops
-import gymnasium as gym
 import heapq
 import numpy as np
 from stable_baselines3.common.buffers import RolloutBuffer
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
-from typing_extensions import override
-from ..utils import build_layered_module
-from .reward_mod import RewardModifierCallback
-
-
-class Discriminator(nn.Module):
-    def __init__(self, input_dim, net_arch=[32, 32], activation_fn=nn.ReLU):
-        super().__init__()
-        self.layers = build_layered_module(input_dim, net_arch, activation_fn)
-
-
-    def forward(self, x):
-        return self.layers(x)
+from .discriminator import BaseDiscriminatorCallback
 
 
 class StepBuffer:
@@ -56,107 +41,36 @@ class StepBuffer:
             self.n_steps -= least_ep_len
 
 
-class DIRECTCallback(RewardModifierCallback):
-    def __init__(self,
-        si_buffer_size_steps: int = 8192,
-        n_epochs_disc: int = 10,
-        learning_rate_disc: float = 2e-4,
-        batch_size_disc: int = 8192,
-        disc_kwargs: dict = {},
-        reward_mixture_coef: float = 0.5,
-        **kwargs
-    ):
-        super().__init__(log_prefix='direct/', **kwargs)
-
+class DIRECTCallback(BaseDiscriminatorCallback):
+    def __init__(self, si_buffer_size_steps: int = 8192, **kwargs):
+        super().__init__(**kwargs)
         self.si_buffer_size_steps = si_buffer_size_steps
-        self.n_epochs_disc = n_epochs_disc
-        self.lr_disc = learning_rate_disc
-        self.batch_size_disc = batch_size_disc
-        self.disc_kwargs = disc_kwargs
-        self.reward_mixture_coef = reward_mixture_coef
 
 
     def _init_callback(self):
+        super()._init_callback()
         self.si_buffer = StepBuffer(self.training_env.num_envs, self.si_buffer_size_steps)
-
-        obs_dim = self.training_env.observation_space.shape[0]
-        act_dim = 1 if isinstance(self.training_env.action_space, gym.spaces.Discrete) else self.training_env.action_space.shape[0]
-        reward_dim = 1
-
-        input_dim = obs_dim + act_dim + reward_dim
-        self.discriminator = Discriminator(input_dim, **self.disc_kwargs)
-        self.disc_loss = nn.BCEWithLogitsLoss()
-        self.disc_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=self.lr_disc)
-
-
-    def _get_current_step(self):
-        obs = torch.as_tensor(self.model._last_obs, dtype=torch.float).reshape(self.training_env.num_envs, -1)
-        act = torch.as_tensor(self.locals['actions'], dtype=torch.float).reshape(self.training_env.num_envs, -1)
-        gt_reward = torch.as_tensor(self.locals['rewards'], dtype=torch.float).reshape(self.training_env.num_envs, -1)
-        return obs, act, gt_reward
 
 
     def _get_rollout_steps(self) -> torch.Tensor:
         buffer: RolloutBuffer = self.model.rollout_buffer
-        steps = torch.cat([torch.as_tensor(buffer.observations), torch.as_tensor(buffer.actions), torch.as_tensor(buffer.rewards).unsqueeze(-1)], dim=-1)
+        steps = torch.cat([
+            torch.as_tensor(buffer.observations),
+            torch.as_tensor(buffer.actions),
+            torch.as_tensor(buffer.rewards).unsqueeze(-1)
+        ], dim=-1)
         flat_steps = einops.rearrange(steps, 'buffer env dim -> (buffer env) dim')
         return flat_steps
 
 
-    def _build_dataset(self) -> TensorDataset:
-        best_steps = torch.cat([ep for _, _, ep in self.si_buffer.episodes])[:self.si_buffer_size_steps]
-
-        rollout_step_indices = torch.randint(0, self.model.rollout_buffer.pos, (self.si_buffer_size_steps,))
-        rollout_steps = self._get_rollout_steps()[rollout_step_indices]
-
-        steps = torch.cat([best_steps, rollout_steps])
-        labels = torch.cat([torch.ones(len(best_steps)), torch.zeros(len(rollout_steps))])
-        return TensorDataset(steps, labels)
+    def _get_positive_samples(self):
+        best_steps = torch.cat([ep for _, _, ep in self.si_buffer.episodes])
+        return best_steps[:self.si_buffer_size_steps]
 
 
-    def _compute_disc_loss(self, steps: torch.Tensor, labels: torch.Tensor):
-        logits = self.discriminator(steps).squeeze()
-        loss = self.disc_loss(logits, labels)
-
-        pred_labels = (torch.sigmoid(logits) >= 0.5).float()
-        accuracy = (pred_labels == labels).float().mean().item()
-
-        return loss, accuracy
-
-
-    def _train_discriminator(self):
-        self.discriminator.train()
-
-        dataloader = DataLoader(self._build_dataset(), batch_size=self.batch_size_disc, shuffle=True)
-        losses = []
-        accuracies = []
-
-        for _ in range(self.n_epochs_disc):
-            for steps, labels in dataloader:
-                self.disc_optimizer.zero_grad()
-
-                loss, accuracy = self._compute_disc_loss(steps, labels)
-                loss.backward()
-                self.disc_optimizer.step()
-
-                losses.append(loss.item())
-                accuracies.append(accuracy)
-
-        self.logger.record('direct/discriminator/train/loss', np.mean(losses))
-        self.logger.record('direct/discriminator/train/accuracy', np.mean(accuracies))
-
-
-    @override
-    def _predict_rewards(self):
-        self.discriminator.eval()
-
-        obs, act, gt_reward = self._get_current_step()
-
-        with torch.no_grad():
-            cat_step = torch.cat([obs, act, gt_reward], dim=-1)
-            disc_reward = self.reward_mixture_coef * self.discriminator(cat_step)
-
-        return disc_reward + (1 - self.reward_mixture_coef) * gt_reward
+    def _get_negative_samples(self, batch_size):
+        rollout_step_indices = torch.randint(0, self.model.rollout_buffer.pos, (batch_size,))
+        return self._get_rollout_steps()[rollout_step_indices]
 
 
     def _on_step(self):

@@ -15,7 +15,7 @@ method:
   clip_range:
     _target_: pref_rl.config.LinearSchedule
     start: 0.4
-    end: 0.0
+    end: 0.3
   gae_lambda: 0.9
   n_epochs: 20
   use_sde: true

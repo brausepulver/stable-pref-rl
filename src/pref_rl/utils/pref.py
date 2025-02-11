@@ -74,7 +74,7 @@ class Sampler:
         self.pre_sample_multiplier = pre_sample_multiplier
 
 
-    def sample_segments(self, episodes: list, reward_model: callable, num_samples: int, method: str = 'uniform'):
+    def sample_segments(self, episodes: list, num_samples: int, method: str = 'uniform', reward_model: callable = None):
         assert method in ('uniform', 'disagree', 'entropy'), f"Unknown sampling method: {method}"
 
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]

@@ -1,0 +1,22 @@
+defaults:
+  - /preset/discriminator/direct@_here_
+  - /preset/ppo/quadruped_walk@_here_
+  - /preset/pref/quadruped_walk@_here_
+  - _self_
+
+method:
+  _target_: pref_rl.methods.pref_direct.PrefDIRECT
+
+  pref:
+    sampler: uniform
+
+  direct:
+    learning_rate_disc: 3e-4
+    n_epochs_disc: 10
+
+    disc_kwargs:
+      net_arch: [256, 256, 256]
+      activation_fn:
+        _target_: torch.nn.ReLU
+
+    reward_mixture_coef: 1.0

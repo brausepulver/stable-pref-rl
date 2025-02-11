@@ -5,13 +5,41 @@ from stable_baselines3.common.callbacks import BaseCallback
 import torch
 
 
-class UnsuperCallback(BaseCallback):
+class RunningStats:
+    def __init__(self):
+        self.n = 0
+        self.mean = 0.0
+        self.M2 = 0.0
+
+
+    def update(self, x):
+        if isinstance(x, torch.Tensor):
+            x = x.cpu().numpy()
+        x = np.array(x).flatten()
+
+        for val in x:
+            self.n += 1
+            delta = val - self.mean
+            self.mean += delta / self.n
+            delta2 = val - self.mean
+            self.M2 += delta * delta2
+
+
+    def get_stats(self):
+        if self.n < 2:
+            return self.mean, 1.0
+        var = self.M2 / (self.n - 1)
+        return self.mean, np.sqrt(var)
+
+
+class UnsupervisedCallback(BaseCallback):
     def __init__(self, *args, n_steps_unsuper=32_000, n_epochs_unsuper=50, **kwargs):
         super().__init__(*args, **kwargs)
         self.n_steps_unsuper = n_steps_unsuper
         self.n_epochs_unsuper = n_epochs_unsuper
 
         self.n_neighbors = 5
+        self.running_stats = RunningStats()
 
 
     def _init_callback(self):
@@ -32,7 +60,11 @@ class UnsuperCallback(BaseCallback):
         distances = torch.norm(differences, dim=-1)
         neighbor_dist = torch.kthvalue(distances, self.n_neighbors + 1, dim=-1).values
 
-        return neighbor_dist.log()
+        self.running_stats.update(neighbor_dist)
+        _, std = self.running_stats.get_stats()
+
+        normalized_dist = neighbor_dist / (std + 1e-8)
+        return normalized_dist
 
 
     def _on_step(self):
@@ -49,7 +81,6 @@ class UnsuperCallback(BaseCallback):
             self.locals['rewards'][env_idx] = state_entropy[env_idx]
 
         self.intr_reward_buffer.extend(state_entropy)
-
         return True
 
 

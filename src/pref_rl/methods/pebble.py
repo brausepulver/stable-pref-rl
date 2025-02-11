@@ -1,8 +1,8 @@
 import torch
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
-from ..callbacks.pref import PrefCallback
-from ..callbacks.unsuper import UnsuperCallback
+from ..callbacks.pref_ppo import PrefCallback
+from ..callbacks.unsupervised import UnsupervisedCallback
 
 
 class PEBBLECallback(BaseCallback):
@@ -26,12 +26,12 @@ class PEBBLECallback(BaseCallback):
 class PEBBLE(SAC):
     def __init__(self, *args, unsuper={}, pref={}, **kwargs):
         super().__init__(*args, **kwargs)
-        self.unsuper = unsuper
-        self.pref = pref
+        self.unsuper_kwargs = unsuper
+        self.pref_kwargs = pref
 
 
     def learn(self, *args, callback=None, **kwargs):
-        callbacks = [PrefCallback(**self.pref, callback=PEBBLECallback()), UnsuperCallback(**self.unsuper)]
+        callbacks = [PrefCallback(**self.pref_kwargs, callback=PEBBLECallback()), UnsupervisedCallback(**self.unsuper_kwargs)]
         callback_list = CallbackList(([callback] if callback is not None else []) + callbacks)
 
         return super().learn(*args, callback=callback_list, **kwargs)

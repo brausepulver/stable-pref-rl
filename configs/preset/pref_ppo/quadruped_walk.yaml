@@ -5,3 +5,19 @@ defaults:
 
 method:
   _target_: pref_rl.methods.pref_ppo.PrefPPO
+
+  unsuper:
+    n_steps_unsuper: 32_000
+    n_epochs_unsuper: 50
+
+  pref:
+    n_epochs_reward: 100
+    train_acc_threshold_reward: 0.97
+    learning_rate_reward: 3.e-4
+    batch_size_reward: 128
+    reward_model_kwargs:
+      net_arch: [256, 256, 256]
+      activation_fn:
+        _target_: torch.nn.LeakyReLU
+      output_fn:
+        _target_: torch.nn.Tanh
