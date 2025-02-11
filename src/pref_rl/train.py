@@ -48,6 +48,7 @@ def main(cfg: DictConfig) -> None:
     wandb_callback = WandbCallback()
 
     # Create model
+    stats_window_size = cfg.preset.get('logging', {}).get('stats_window_size')
     model: BaseAlgorithm = hydra.utils.instantiate(
         cfg.preset.method,
         "MlpPolicy",
@@ -55,7 +56,7 @@ def main(cfg: DictConfig) -> None:
         verbose=1,
         tensorboard_log=f"runs/{run.id}",
         seed=cfg.training.seed,
-        stats_window_size=env.num_envs,
+        **({'stats_window_size': stats_window_size} if stats_window_size else {}),
         # Hydra arguments
         _convert_="all"
     )

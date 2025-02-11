@@ -6,6 +6,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
+from typing_extensions import override
+from ..utils import build_layered_module
+from .reward_mod import RewardModifierCallback
 
 
 class RewardModel(nn.Module):
@@ -15,22 +18,14 @@ class RewardModel(nn.Module):
 
 
     def _build_member(self, input_dim, net_arch=[256, 256, 256], activation_fn=nn.LeakyReLU, output_fn=nn.Tanh):
-        return nn.Sequential(*(
-            [nn.Linear(input_dim, net_arch[0])] +
-            sum([[activation_fn, nn.Linear(_from, _to)] for _from, _to in zip(net_arch, net_arch[1:] + [1])], []) +
-            [output_fn]
-        ))
-
-
-    def forward_members(self, x):
-        return torch.cat([member(x) for member in self.members], dim=-1)
+        return build_layered_module(input_dim, net_arch, activation_fn, output_fn)
 
 
     def forward(self, x):
-        return self.forward_members(x).mean(dim=-1)
+        return torch.stack([member(x) for member in self.members])
 
 
-class EpisodeBuffer():
+class EpisodeBuffer:
     def __init__(self, num_envs, num_episodes):
         self._env_buffer = [[] for _ in range(num_envs)]
         self.episodes = deque(maxlen=num_episodes)
@@ -40,16 +35,16 @@ class EpisodeBuffer():
         for env_idx, env_value in enumerate(value):
             self._env_buffer[env_idx].append(env_value)
 
-        for env_idx in np.argwhere(done).squeeze():
+        for env_idx in np.argwhere(done).reshape(-1):
             episode = self._env_buffer[env_idx]
             self.episodes.append(torch.stack(episode))
             episode.clear()
 
 
-class PrefCallback(EventCallback):
+class PrefCallback(RewardModifierCallback):
     def __init__(self,
         n_steps_reward: int = 32_000,
-        ann_buffer_size: int = 100,
+        ann_buffer_size_eps: int = 100,
         sampler: str = 'uniform',
         segment_size: int = 50,
         max_feed: int = 2_000,
@@ -63,10 +58,10 @@ class PrefCallback(EventCallback):
         teacher_kwargs: dict = {},
         **kwargs
     ):
-        super().__init__(**kwargs)
+        super().__init__(log_prefix='reward_model/', **kwargs)
 
         self.n_steps_reward = n_steps_reward
-        self.ann_buffer_size = ann_buffer_size
+        self.ann_buffer_size_eps = ann_buffer_size_eps
         self.sampler = sampler
         self.segment_size = segment_size
         self.max_feed = max_feed
@@ -90,7 +85,7 @@ class PrefCallback(EventCallback):
 
 
     def _init_callback(self):
-        self.annotation_buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size)
+        self.annotation_buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps)
 
         self.observation_size = self.training_env.observation_space.shape[0]
         self.action_size = self.training_env.action_space.shape[0]
@@ -107,10 +102,6 @@ class PrefCallback(EventCallback):
         self.num_feed = 0
 
 
-    def _on_rollout_start(self):
-        self.pred_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
-
-
     def _update_thresholds(self):
         ep_lens, ep_rets = zip(*[(len(ep), sum(ep)) for ep in self.annotation_buffer.episodes])
         margin = np.mean(ep_rets) * self.segment_size / np.mean(ep_lens)
@@ -120,6 +111,8 @@ class PrefCallback(EventCallback):
 
 
     def _sample_segments(self, num_samples: int, sampler: str):
+        self.reward_model.eval()
+
         episodes = self.annotation_buffer.episodes
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
 
@@ -148,16 +141,16 @@ class PrefCallback(EventCallback):
 
         elif sampler in ('disagree', 'entropy'):
             with torch.no_grad():
-                member_rewards = self.reward_model.forward_members(split_state_actions)
-                member_returns = einops.reduce(member_rewards, 'n1 n2 s m -> n1 n2 m', 'sum')
+                member_rewards = self.reward_model(split_state_actions)
+                member_returns = einops.reduce(member_rewards, 'm n1 n2 s 1 -> m n1 n2', 'sum')
 
-                probabilities = F.softmax(member_returns, dim=1)
+                probabilities = F.softmax(member_returns, dim=-1)
 
                 if sampler == 'disagree':
-                    metric = probabilities[:, 0].std(dim=-1)
+                    metric = probabilities[:, 0].std(dim=0)
                 elif sampler == 'entropy':
-                    entropy = -torch.sum(probabilities * torch.log(probabilities), dim=1)
-                    metric = entropy.mean(dim=-1)
+                    entropy = -torch.sum(probabilities * torch.log(probabilities), dim=-1)
+                    metric = entropy.mean(dim=0)
 
                 idx = torch.topk(metric, num_samples).indices
                 return split_state_actions[idx], split_rewards[:, idx]
@@ -182,14 +175,12 @@ class PrefCallback(EventCallback):
 
         keep_indices = torch.argwhere(torch.max(torch.abs(returns) >= self.threshold_skip, dim=0).values).squeeze(-1)
         preferences = preferences[keep_indices]
-
         return preferences, keep_indices
 
 
     def _generate_data(self, num_samples: int, sampler: str):
         state_actions, gt_rewards = self._sample_segments(num_samples, sampler)
         preferences, keep_indices = self._query_segments(gt_rewards)
-
         return state_actions[keep_indices], preferences
 
 
@@ -205,19 +196,17 @@ class PrefCallback(EventCallback):
 
 
     def _calculate_accuracy(self, pred_returns: torch.Tensor, preferences: torch.Tensor):
-        pred_preferences = torch.argmax(pred_returns, dim=1)
-
+        pred_preferences = torch.argmax(pred_returns.mean(dim=0), dim=-1)
         correct = (pred_preferences == preferences).float()
         return correct.mean().item()
 
 
     def _compute_reward_model_loss(self, segments: torch.Tensor, preferences: torch.Tensor):
         pred_rewards = self.reward_model(segments)
-        pred_returns = einops.reduce(pred_rewards, 'b n s -> b n', 'sum')
+        pred_returns = einops.reduce(pred_rewards, 'm b n s 1 -> m b n', 'sum')
 
-        loss = self.rew_loss(pred_returns, preferences)
+        loss = torch.stack([self.rew_loss(member_returns, preferences) for member_returns in pred_returns]).sum()
         accuracy = self._calculate_accuracy(pred_returns, preferences)
-
         return loss, accuracy
 
 
@@ -226,7 +215,6 @@ class PrefCallback(EventCallback):
 
         dataset = TensorDataset(self.segment_buffer, self.preference_buffer)
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
-
         batch_losses = []
         batch_accuracies = []
 
@@ -267,37 +255,27 @@ class PrefCallback(EventCallback):
         self.logger.record('reward_model/eval/accuracy', np.mean(batch_accuracies))
 
 
-    def _predict_rewards(self, state_actions: torch.Tensor):
-        pred_rewards = self.reward_model(state_actions)
-
-        for env_idx in range(len(pred_rewards)):
-            pred_reward = pred_rewards[env_idx].item()
-
-            self.locals['rewards'][env_idx] = pred_reward  # We cannot modify the reference in self.locals['rewards'] directly
-            self.pred_reward_buffer[env_idx].append(pred_reward)
+    def _get_current_step(self):
+        obs = torch.tensor(self.model._last_obs, dtype=torch.float)
+        act = torch.tensor(self.locals['actions'], dtype=torch.float)
+        gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float).unsqueeze(-1)
+        return obs, act, gt_rewards
 
 
-    def _log_pred_reward(self, infos):
-        for env_idx, info in enumerate(infos):
-            ep_info = info.get('episode')
-            if ep_info is None:
-                continue
+    @override
+    def _predict_rewards(self):
+        self.reward_model.eval()
 
-            ep_mean_pred_r = np.mean(self.pred_reward_buffer[env_idx])
-            ep_info['pred_r'] = ep_mean_pred_r
-            self.pred_reward_buffer[env_idx] = []
+        obs, act, _ = self._get_current_step()
+        state_actions = torch.cat([obs, act], dim=-1)
+
+        with torch.no_grad():
+            return self.reward_model(state_actions).mean(dim=0)
 
 
     def _on_step(self):
-        self.reward_model.eval()
-
-        obs = torch.tensor(self.model._last_obs, dtype=torch.float)
-        act = torch.tensor(self.locals['actions'], dtype=torch.float)
-        state_actions = torch.cat([obs, act], dim=-1)
-
-        gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float).unsqueeze(-1)
-        annotations = torch.cat([state_actions, gt_rewards], dim=-1)
-
+        obs, act, gt_rewards = self._get_current_step()
+        annotations = torch.cat([obs, act, gt_rewards], dim=-1)
         self.annotation_buffer.add(annotations, self.locals['dones'])
 
         if self.locals['dones'].any():
@@ -314,15 +292,4 @@ class PrefCallback(EventCallback):
                 self._validate_reward_model()
             self._on_event()
 
-        with torch.no_grad():
-            self._predict_rewards(state_actions)
-
-        self._log_pred_reward(self.locals['infos'])
-        return True
-
-
-    def _on_rollout_end(self):
-        ep_pred_rew = [ep_info['pred_r'] for ep_info in self.model.ep_info_buffer if 'pred_r' in ep_info]
-
-        if ep_pred_rew:
-            self.logger.record('reward_model/ep_pred_rew_mean', np.mean(ep_pred_rew))
+        return super()._on_step()

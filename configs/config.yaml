@@ -13,3 +13,4 @@ logging:
   group: null
   checkpoint_freq: 100_000
   eval_freq: 10_000
+  stats_window_size: ${training.num_envs}

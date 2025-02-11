@@ -27,17 +27,19 @@ class FlattenObservationWrapper(gym.ObservationWrapper):
         return obs
 
 
-def get_hyphi_gym_factory(name: str, record_video=False, render_mode=None):
+def get_hyphi_gym_factory(name: str, render_mode=None):
     global _HYPHI_GYM_ENVS_REGISTERED
 
-    from hyphi_gym import named, register_envs, Monitor as HyphiMonitor
+    from hyphi_gym import named, register_envs
 
     if not _HYPHI_GYM_ENVS_REGISTERED:
         register_envs()
         _HYPHI_GYM_ENVS_REGISTERED = True
 
     def factory() -> gym.Env:
-        return HyphiMonitor(gym.make(render_mode=render_mode, **named(name)), record_video=record_video)
+        env = gym.make(render_mode=render_mode, **named(name))
+        env = Monitor(env)
+        return env
 
     return factory
 
