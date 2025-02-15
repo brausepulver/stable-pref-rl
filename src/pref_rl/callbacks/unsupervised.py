@@ -1,6 +1,7 @@
 from collections import deque
 import einops
 import numpy as np
+from stable_baselines3.common.vec_env import VecNormalize
 import torch
 from .reward_mod import RewardModifierCallback
 
@@ -19,6 +20,7 @@ class UnsupervisedCallback(RewardModifierCallback):
 
     def _estimate_state_entropy(self, obs: torch.Tensor):
         all_obs = einops.rearrange(torch.stack(list(self._buffer)), 'n e d -> (n e) d')
+
         differences = obs.unsqueeze(1) - all_obs
         distances = torch.norm(differences, dim=-1)
         neighbor_dist = torch.kthvalue(distances, self.n_neighbors + 1, dim=-1).values
@@ -28,8 +30,16 @@ class UnsupervisedCallback(RewardModifierCallback):
         return normalized_dist
 
 
+    def _get_unnormalized_obs(self):
+        if isinstance(self.training_env, VecNormalize):
+            original_obs = self.model.get_vec_normalize_env().get_original_obs()
+            return torch.tensor(original_obs, dtype=torch.float)
+
+        return self._get_current_step()[0]
+
+
     def _predict_rewards(self):
-        obs, _, _ = self._get_current_step()
+        obs = self._get_unnormalized_obs()
         return self._estimate_state_entropy(obs)
 
 
@@ -37,7 +47,7 @@ class UnsupervisedCallback(RewardModifierCallback):
         if self.num_timesteps > self.n_steps_unsuper:
             return True
 
-        obs, _, _ = self._get_current_step()
+        obs = self._get_unnormalized_obs()
         self._buffer.append(obs)
         return super()._on_step()
 

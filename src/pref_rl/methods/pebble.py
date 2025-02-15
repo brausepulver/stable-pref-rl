@@ -3,6 +3,7 @@ from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 from ..callbacks.pref_ppo import PrefCallback
 from ..callbacks.unsupervised import UnsupervisedCallback
+from ..utils.callbacks import get_default_callbacks
 
 
 class PEBBLECallback(BaseCallback):
@@ -31,7 +32,10 @@ class PEBBLE(SAC):
 
 
     def learn(self, *args, callback=None, **kwargs):
-        callbacks = [PrefCallback(**self.pref_kwargs, callback=PEBBLECallback()), UnsupervisedCallback(**self.unsuper_kwargs)]
+        callbacks = [
+            PrefCallback(**self.pref_kwargs, callback=PEBBLECallback()),
+            UnsupervisedCallback(**self.unsuper_kwargs),
+            get_default_callbacks()
+        ]
         callback_list = CallbackList(([callback] if callback is not None else []) + callbacks)
-
         return super().learn(*args, callback=callback_list, **kwargs)

@@ -3,6 +3,7 @@ from stable_baselines3.common.buffers import RolloutBuffer
 from stable_baselines3.common.callbacks import CallbackList
 from ..callbacks.pref_ppo import PrefPPOCallback
 from ..callbacks.unsupervised import UnsupervisedCallback
+from ..utils.callbacks import get_default_callbacks
 
 
 class PrefPPO(PPO):
@@ -46,13 +47,15 @@ class PrefPPO(PPO):
         def on_first_pref_ppo_train():
             self.policy.init_weights(self.policy.value_net)
 
-        pref_ppo_callback = PrefPPOCallback(
-            n_steps_first_train=self.unsuper_kwargs['n_steps_unsuper'],
-            on_first_train=on_first_pref_ppo_train,
-            **self.pref_kwargs
-        )
-        unsuper_callback = UnsupervisedCallback(**self.unsuper_kwargs)
-        callbacks = [pref_ppo_callback, unsuper_callback]  # Later rewards override earlier rewards
+        callbacks = [
+            PrefPPOCallback(
+                n_steps_first_train=self.unsuper_kwargs['n_steps_unsuper'],
+                on_first_train=on_first_pref_ppo_train,
+                **self.pref_kwargs
+            ),
+            UnsupervisedCallback(**self.unsuper_kwargs),
+            get_default_callbacks()
+        ]
 
         callback_list = CallbackList(([callback] if callback is not None else []) + callbacks)
         return super().learn(*args, callback=callback_list, **kwargs)
