@@ -1,4 +1,5 @@
 from abc import abstractmethod
+import gymnasium as gym
 import numpy as np
 from stable_baselines3.common.callbacks import EventCallback
 import torch
@@ -10,8 +11,23 @@ class RewardModifierCallback(EventCallback):
         self.log_prefix = log_prefix
 
 
+    def _get_input_sizes(self):
+        def normalize_shape(shape):
+            return (1,) if len(shape) == 0 else shape
+
+        obs_space = self.training_env.observation_space
+        if isinstance(obs_space, gym.spaces.Dict):
+            observation_size = sum([normalize_shape(space.shape)[0] for space in obs_space.spaces.values()])
+        else:
+            observation_size = normalize_shape(obs_space.shape)[0]
+
+        action_size = normalize_shape(self.training_env.action_space.shape)[0]
+        return observation_size, action_size
+
+
     def _get_current_step(self):
-        obs = torch.tensor(self.model._last_obs, dtype=torch.float).reshape(self.training_env.num_envs, -1)
+        maybe_flat_obs = np.array(list(self.model._last_obs.values())) if isinstance(self.model._last_obs, dict) else self.model._last_obs
+        obs = torch.tensor(maybe_flat_obs, dtype=torch.float).reshape(self.training_env.num_envs, -1)
         act = torch.tensor(self.locals['clipped_actions'], dtype=torch.float).reshape(self.training_env.num_envs, -1)
         gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float).reshape(self.training_env.num_envs, -1)
         return obs, act, gt_rewards

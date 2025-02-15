@@ -29,7 +29,7 @@ class BaseDiscriminatorCallback(RewardModifierCallback, ABC):
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
-        
+
         self.n_epochs_disc = n_epochs_disc
         self.batch_size_disc = batch_size_disc
         self.disc_kwargs = disc_kwargs
@@ -41,10 +41,9 @@ class BaseDiscriminatorCallback(RewardModifierCallback, ABC):
     def _init_callback(self):
         super()._init_callback()
 
-        self.observation_size = self.training_env.observation_space.shape[0]
-        self.action_size = 1 if isinstance(self.training_env.action_space, gym.spaces.Discrete) else self.training_env.action_space.shape[0]
-        input_dim = self.observation_size + self.action_size + (1 if self.use_rewards_as_features else 0)
-        
+        obs_size, act_size = self._get_input_sizes()
+        input_dim = obs_size + act_size + (1 if self.use_rewards_as_features else 0)
+
         self.discriminator = Discriminator(input_dim, **self.disc_kwargs)
         self.disc_loss = nn.BCEWithLogitsLoss()
         self.disc_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=self.lr_disc)
@@ -63,7 +62,7 @@ class BaseDiscriminatorCallback(RewardModifierCallback, ABC):
     def _build_dataset(self):
         positive_samples = self._get_positive_samples()
         negative_samples = self._get_negative_samples(len(positive_samples))
-        
+
         samples = torch.cat([positive_samples, negative_samples])
         labels = torch.cat([torch.ones(len(positive_samples)), torch.zeros(len(negative_samples))])
         return TensorDataset(samples, labels)
@@ -72,16 +71,16 @@ class BaseDiscriminatorCallback(RewardModifierCallback, ABC):
     def _compute_disc_loss(self, inputs, labels):
         logits = self.discriminator(inputs).squeeze()
         loss = self.disc_loss(logits, labels)
-        
+
         pred_labels = (torch.sigmoid(logits) >= 0.5).float()
         accuracy = (pred_labels == labels).float().mean().item()
-        
+
         return loss, accuracy
 
 
     def _train_discriminator(self):
         self.discriminator.train()
-        
+
         dataloader = DataLoader(self._build_dataset(), batch_size=self.batch_size_disc, shuffle=True)
         losses = []
         accuracies = []
@@ -92,7 +91,7 @@ class BaseDiscriminatorCallback(RewardModifierCallback, ABC):
                 loss, accuracy = self._compute_disc_loss(inputs, labels)
                 loss.backward()
                 self.disc_optimizer.step()
-                
+
                 losses.append(loss.item())
                 accuracies.append(accuracy)
 
@@ -102,12 +101,12 @@ class BaseDiscriminatorCallback(RewardModifierCallback, ABC):
 
     def _predict_rewards(self):
         self.discriminator.eval()
-        
+
         obs, act, gt_reward = self._get_current_step()
         disc_features = torch.cat([obs, act] + ([gt_reward] if self.use_rewards_as_features else []), dim=-1)
-        
+
         with torch.no_grad():
             disc_reward = self.discriminator(disc_features)
             mixed_reward = self.reward_mixture_coef * disc_reward + (1 - self.reward_mixture_coef) * gt_reward
-            
+
         return mixed_reward

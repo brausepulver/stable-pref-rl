@@ -42,7 +42,7 @@ class PrefPPOCallback(BasePrefCallback):
     def _init_callback(self):
         super()._init_callback()
 
-        input_dim = self.observation_size + self.action_size
+        input_dim = sum(self._get_input_sizes())
         self.reward_model = RewardModel(input_dim, **self.reward_model_kwargs)
         self.rew_loss = nn.CrossEntropyLoss()
         self.rew_optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=self.lr_reward)

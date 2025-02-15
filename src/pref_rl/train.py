@@ -31,6 +31,12 @@ def main(cfg: DictConfig) -> None:
     run = setup_wandb(cfg)
 
     # Create environment
+    if 'policy' in cfg.preset.env:
+        policy = cfg.preset.env.policy
+        del cfg.preset.env.policy
+    else:
+        policy = 'MlpPolicy'
+
     env = make_env(n_envs=cfg.training.num_envs, **cfg.preset.env)
 
     # Create eval environment
@@ -51,7 +57,7 @@ def main(cfg: DictConfig) -> None:
     stats_window_size = cfg.preset.get('logging', {}).get('stats_window_size')
     model: BaseAlgorithm = hydra.utils.instantiate(
         cfg.preset.method,
-        "MlpPolicy",
+        policy,
         env,
         verbose=1,
         tensorboard_log=f"runs/{run.id}",
