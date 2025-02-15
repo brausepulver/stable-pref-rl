@@ -49,7 +49,7 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _calculate_accuracy(self, pred_returns: torch.Tensor, preferences: torch.Tensor):
-        pred_preferences = torch.argmax(pred_returns.mean(dim=0), dim=-1)
+        pred_preferences = torch.argmax(pred_returns, dim=-1)
         correct = (pred_preferences == preferences).float()
         return correct.mean().item()
 
