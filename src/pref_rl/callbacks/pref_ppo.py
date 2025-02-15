@@ -48,59 +48,70 @@ class PrefPPOCallback(BasePrefCallback):
         self.rew_optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=self.lr_reward)
 
 
+    def _get_predictor(self):
+        return self.reward_model
+
+
     def _calculate_accuracy(self, pred_returns: torch.Tensor, preferences: torch.Tensor):
         pred_preferences = torch.argmax(pred_returns, dim=-1)
         correct = (pred_preferences == preferences).float()
         return correct.mean().item()
 
 
-    def _compute_reward_model_loss(self, segments: torch.Tensor, preferences: torch.Tensor):
-        pred_rewards = self.reward_model(segments)
-        pred_returns = einops.reduce(pred_rewards, 'm b n s 1 -> m b n', 'sum')
-
-        loss = torch.stack([self.rew_loss(member_returns, preferences) for member_returns in pred_returns]).sum()
+    def _compute_loss_for_member(self, member: nn.Module, segments: torch.Tensor, preferences: torch.Tensor):
+        pred_rewards = member(segments)
+        pred_returns = einops.reduce(pred_rewards, 'b n s 1 -> b n', 'sum')
+        loss = self.rew_loss(pred_returns, preferences)
         accuracy = self._calculate_accuracy(pred_returns, preferences)
         return loss, accuracy
 
 
-    def _get_predictor(self):
-        return self.reward_model
+    def _train_reward_model_member(self, member: nn.Module):
+        dataset = TensorDataset(self.segment_buffer, self.preference_buffer)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
+        losses = []
+        accuracies = []
+
+        for segments, preferences in dataloader:
+            self.rew_optimizer.zero_grad()
+            loss, accuracy = self._compute_loss_for_member(member, segments, preferences)
+            loss.backward()
+            self.rew_optimizer.step()
+
+            losses.append(loss.item())
+            accuracies.append(accuracy)
+
+        return losses, accuracies
 
 
     def _train_predictor(self):
         self.reward_model.train()
 
-        dataset = TensorDataset(self.segment_buffer, self.preference_buffer)
-        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
-        batch_losses = []
-        batch_accuracies = []
+        member_losses = []
+        member_accuracies = []
 
         for epoch in range(self.n_epochs_reward):
-            batch_acc_epoch = []
+            member_acc_epoch = []
 
-            for segments, preferences in dataloader:
-                self.rew_optimizer.zero_grad()
-                loss, accuracy = self._compute_reward_model_loss(segments, preferences)
-                loss.backward()
-                self.rew_optimizer.step()
+            for member in self.reward_model.members:
+                losses, accuracies = self._train_reward_model_member(member)
+                member_losses.append(losses)
+                member_acc_epoch.append(accuracies)
 
-                batch_losses.append(loss.item())
-                batch_acc_epoch.append(accuracy)
-
-            batch_accuracies.extend(batch_acc_epoch)
-
-            if np.mean(batch_acc_epoch) > self.train_acc_threshold_reward:
+            if np.mean(member_acc_epoch) > self.train_acc_threshold_reward:
                 break
 
-        self.logger.record('reward_model/train/loss', np.mean(batch_losses))
-        self.logger.record('reward_model/train/accuracy', np.mean(batch_accuracies))
+            member_accuracies.extend(member_acc_epoch)
+
+        self.logger.record('reward_model/train/loss', np.mean(member_losses))
+        self.logger.record('reward_model/train/accuracy', np.mean(member_accuracies))
         self.logger.record('reward_model/train/epochs', epoch + 1)
 
         with torch.no_grad():
-            self._validate_predictor()
+            self._validate_reward_model()
 
 
-    def _validate_predictor(self):
+    def _validate_reward_model(self):
         self.reward_model.eval()
 
         segments, rewards = self.sampler.sample_segments(self.buffer.episodes, len(self.segment_buffer), 'uniform', self.reward_model)
@@ -109,7 +120,7 @@ class PrefPPOCallback(BasePrefCallback):
         dataset = TensorDataset(segments[keep_indices], preferences)
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
 
-        batch_statistics = [self._compute_reward_model_loss(*batch) for batch in dataloader]
+        batch_statistics = [self._compute_loss_for_member(member, *batch) for batch in dataloader for member in self.reward_model.members]
         batch_losses, batch_accuracies = zip(*batch_statistics)
 
         self.logger.record('reward_model/eval/loss', np.mean(batch_losses))
