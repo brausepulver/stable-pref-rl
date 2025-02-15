@@ -3,11 +3,11 @@
 for seed in $(seq 0 16 144); do
     echo "Running with seed ${seed}"
     train \
-        preset=ppo/quadruped_walk \
+        preset=sac/quadruped_walk \
         training.total_timesteps=4000000 \
         training.seed=${seed} \
-        'logging.tags=[baseline, ppo]' \
-        logging.group=ppo_baseline &
+        'logging.tags=[baseline, sac]' \
+        logging.group="sac_baseline" &
 done
 
 wait
