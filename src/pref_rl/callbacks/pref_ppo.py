@@ -66,7 +66,7 @@ class PrefPPOCallback(BasePrefCallback):
         return loss, accuracy
 
 
-    def _train_reward_model_member(self, member: nn.Module):
+    def _train_member_epoch(self, member: nn.Module):
         dataset = TensorDataset(self.segment_buffer, self.preference_buffer)
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
         losses = []
@@ -81,30 +81,29 @@ class PrefPPOCallback(BasePrefCallback):
             losses.append(loss.item())
             accuracies.append(accuracy)
 
-        return losses, accuracies
+        return np.mean(losses), np.mean(accuracies)
+
+
+    def _train_reward_model_epoch(self):
+        losses, accuracies = zip(*[self._train_member_epoch(member) for member in self.reward_model.members])
+        return np.mean(losses), np.mean(accuracies)
 
 
     def _train_predictor(self):
         self.reward_model.train()
-
-        member_losses = []
-        member_accuracies = []
+        losses = []
+        accuracies = []
 
         for epoch in range(self.n_epochs_reward):
-            member_acc_epoch = []
+            loss, accuracy = self._train_reward_model_epoch()
+            losses.append(loss)
+            accuracies.append(accuracy)
 
-            for member in self.reward_model.members:
-                losses, accuracies = self._train_reward_model_member(member)
-                member_losses.append(losses)
-                member_acc_epoch.append(accuracies)
-
-            if np.mean(member_acc_epoch) > self.train_acc_threshold_reward:
+            if accuracy > self.train_acc_threshold_reward:
                 break
 
-            member_accuracies.extend(member_acc_epoch)
-
-        self.logger.record('reward_model/train/loss', np.mean(member_losses))
-        self.logger.record('reward_model/train/accuracy', np.mean(member_accuracies))
+        self.logger.record('reward_model/train/loss', np.mean(losses))
+        self.logger.record('reward_model/train/accuracy', np.mean(accuracies))
         self.logger.record('reward_model/train/epochs', epoch + 1)
 
         with torch.no_grad():
