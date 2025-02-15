@@ -7,7 +7,7 @@ from .reward_mod import RewardModifierCallback
 
 class UnsupervisedCallback(RewardModifierCallback):
     def __init__(self, *args, n_steps_unsuper: int = 32_000, n_epochs_unsuper: int = 50, n_neighbors: int = 5, **kwargs):
-        super().__init__(*args, log_prefix='pretrain/', **kwargs)
+        super().__init__(*args, ep_info_key='intr_r', log_prefix='pretrain/', log_suffix='ep_intr_rew_mean', **kwargs)
         self.n_steps_unsuper = n_steps_unsuper
         self.n_epochs_unsuper = n_epochs_unsuper
         self.n_neighbors = n_neighbors
@@ -33,16 +33,22 @@ class UnsupervisedCallback(RewardModifierCallback):
         return self._estimate_state_entropy(obs)
 
 
-    def _clean_up(self):
-        self._buffer = None
-
-
     def _on_step(self):
         if self.num_timesteps > self.n_steps_unsuper:
-            self._clean_up()
             return True
 
         obs, _, _ = self._get_current_step()
         self._buffer.append(obs)
-
         return super()._on_step()
+
+
+    def _clean_up(self):
+        self._buffer = None
+
+
+    def _on_rollout_end(self):
+        if self.num_timesteps > self.n_steps_unsuper:
+            self._clean_up()
+            return
+
+        super()._on_rollout_end()

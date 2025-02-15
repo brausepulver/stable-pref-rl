@@ -6,9 +6,11 @@ import torch
 
 
 class RewardModifierCallback(EventCallback):
-    def __init__(self, log_prefix='rollout/', **kwargs):
+    def __init__(self, ep_info_key: str = 'pred_r', log_prefix: str = 'rollout/', log_suffix = 'ep_pred_rew_mean', **kwargs):
         super().__init__(**kwargs)
+        self.ep_info_key = ep_info_key
         self.log_prefix = log_prefix
+        self.log_suffix = log_suffix
 
 
     def _get_input_sizes(self):
@@ -57,7 +59,7 @@ class RewardModifierCallback(EventCallback):
                 continue
 
             ep_mean_pred_r = np.mean(self.pred_reward_buffer[env_idx])
-            ep_info['pred_r'] = ep_mean_pred_r
+            ep_info[self.ep_info_key] = ep_mean_pred_r
             self.pred_reward_buffer[env_idx] = []
 
 
@@ -69,7 +71,7 @@ class RewardModifierCallback(EventCallback):
 
 
     def _on_rollout_end(self):
-        ep_pred_rew = [ep_info['pred_r'] for ep_info in self.model.ep_info_buffer if 'pred_r' in ep_info]
+        ep_pred_rew = [ep_info[self.ep_info_key] for ep_info in self.model.ep_info_buffer if self.ep_info_key in ep_info]
 
         if ep_pred_rew:
-            self.logger.record(f"{self.log_prefix}ep_pred_rew_mean", np.mean(ep_pred_rew))
+            self.logger.record(f"{self.log_prefix}{self.log_suffix}", np.mean(ep_pred_rew))

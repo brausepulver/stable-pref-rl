@@ -55,9 +55,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
-    def _expand_data(self):
+    def _expand_data(self, sampling_method: str):
         num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
-        state_actions, rewards = self.sampler.sample_segments(self.buffer.episodes, num_samples, self.sampling_method, self._get_predictor())
+        state_actions, rewards = self.sampler.sample_segments(self.buffer.episodes, num_samples, sampling_method, self._get_predictor())
 
         preferences, keep_indices = self.teacher.query_segments(rewards)
 
@@ -90,12 +90,13 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         feedback_left = self.num_feed < self.max_feed
 
         if checkpoint_reached and feedback_left:
+            sampling_method = 'uniform' if not self.has_trained else self.sampling_method
+            self._expand_data(sampling_method)
+            self._train_predictor()
+            self._on_event()
+
             if not self.has_trained:
                 self.has_trained = True
                 if self.on_first_train: self.on_first_train()
 
-            self._expand_data()
-            self._train_predictor()
-            self._on_event()
-
-        return super()._on_step()
+        return True if not self.has_trained else super()._on_step()
