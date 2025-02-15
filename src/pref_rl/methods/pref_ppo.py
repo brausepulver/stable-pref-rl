@@ -9,14 +9,17 @@ class PrefPPO(PPO):
     def __init__(self, *args, unsuper={}, pref={}, **kwargs):
         super().__init__(*args, _init_setup_model=False, **kwargs)
 
-        ep_completed = self.env.unwrapped.envs[0].spec.max_episode_steps
-        rollout_completed = kwargs['n_steps']
-        self.n_steps = ep_completed + rollout_completed
-        self._setup_model()
-
         self.unsuper_kwargs = unsuper
         self.pref_kwargs = pref
-        self.n_steps_default = kwargs['n_steps']
+        self.unsuper_enabled = self.unsuper_kwargs['n_steps_unsuper'] > 0
+
+        if not self.unsuper_enabled:
+            self.n_steps_default = kwargs['n_steps']
+            ep_completed = self.env.unwrapped.envs[0].spec.max_episode_steps
+            rollout_completed = self.n_steps_default
+            self.n_steps = ep_completed + rollout_completed
+
+        self._setup_model()
 
 
     def _truncate_buffer(self, buffer: RolloutBuffer, size: int):
@@ -32,13 +35,24 @@ class PrefPPO(PPO):
 
 
     def train(self):
-        self.n_steps = self.n_steps_default
-        self._truncate_buffer(self.rollout_buffer, self.n_steps)
+        if not self.unsuper_enabled:
+            self.n_steps = self.n_steps_default
+            self._truncate_buffer(self.rollout_buffer, self.n_steps)
+
         return super().train()
 
 
     def learn(self, *args, callback=None, **kwargs):
-        callbacks = [PrefPPOCallback(**self.pref_kwargs), UnsupervisedCallback(**self.unsuper_kwargs)]
-        callback_list = CallbackList(([callback] if callback is not None else []) + callbacks)
+        def on_first_pref_ppo_train():
+            self.policy.init_weights(self.policy.value_net)
 
+        pref_ppo_callback = PrefPPOCallback(
+            n_steps_first_train=self.unsuper_kwargs['n_steps_unsuper'],
+            on_first_train=on_first_pref_ppo_train,
+            **self.pref_kwargs
+        )
+        unsuper_callback = UnsupervisedCallback(**self.unsuper_kwargs)
+        callbacks = [pref_ppo_callback, unsuper_callback]  # Later rewards override earlier rewards
+
+        callback_list = CallbackList(([callback] if callback is not None else []) + callbacks)
         return super().learn(*args, callback=callback_list, **kwargs)

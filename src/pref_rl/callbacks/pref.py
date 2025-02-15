@@ -16,6 +16,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         teacher: str = None,
         teacher_kwargs: dict = {},
         log_prefix='pref/',
+        n_steps_first_train: int = None,
+        on_first_train: callable = None,
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
@@ -28,8 +30,10 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.feed_batch_size = feed_batch_size
         self.teacher = teacher
         self.teacher_kwargs = teacher_kwargs
+        self.n_steps_first_train = n_steps_first_train
+        self.on_first_train = on_first_train
 
-        self.num_steps_first_train = None
+        self.has_trained = False
         self.num_feed = 0
 
 
@@ -78,14 +82,18 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             self.teacher.update_thresholds(self.buffer.episodes)
 
         buffer_empty = len(self.buffer.episodes) == 0
-        if not buffer_empty and self.num_steps_first_train is None:
-            self.num_steps_first_train = self.num_timesteps
+        if not buffer_empty and self.n_steps_first_train is None:
+            self.n_steps_first_train = self.num_timesteps
 
-        should_train = self.num_steps_first_train is not None
-        checkpoint_reached = should_train and (self.num_timesteps - self.num_steps_first_train) % self.n_steps_reward == 0
+        should_train = self.n_steps_first_train is not None
+        checkpoint_reached = should_train and (self.num_timesteps - self.n_steps_first_train) % self.n_steps_reward == 0
         feedback_left = self.num_feed < self.max_feed
 
         if checkpoint_reached and feedback_left:
+            if not self.has_trained:
+                self.has_trained = True
+                if self.on_first_train: self.on_first_train()
+
             self._expand_data()
             self._train_predictor()
             self._on_event()
