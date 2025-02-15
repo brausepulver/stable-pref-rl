@@ -1,7 +1,7 @@
 method:
   pref:
     n_steps_reward: 32_000
-    ann_buffer_size_eps: 100
+    ann_buffer_size_eps: null
     sampler: entropy
     segment_size: 50
     max_feed: 2_000

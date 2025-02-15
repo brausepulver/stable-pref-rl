@@ -8,7 +8,7 @@ from ..utils.pref import EpisodeBuffer, Teacher, Sampler
 class BasePrefCallback(RewardModifierCallback, ABC):
     def __init__(self,
         n_steps_reward: int = 32_000,
-        ann_buffer_size_eps: int = 100,
+        ann_buffer_size_eps: int = None,
         sampler: str = 'uniform',
         segment_size: int = 50,
         max_feed: int = 2_000,
