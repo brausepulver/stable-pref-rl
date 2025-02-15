@@ -26,9 +26,10 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.segment_size = segment_size
         self.max_feed = max_feed
         self.feed_batch_size = feed_batch_size
-
         self.teacher = teacher
         self.teacher_kwargs = teacher_kwargs
+
+        self.num_steps_first_train = None
         self.num_feed = 0
 
 
@@ -78,11 +79,15 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         if self.locals['dones'].any():
             self.teacher.update_thresholds(self.buffer.episodes)
 
-        checkpoint_reached = self.num_timesteps % self.n_steps_reward == 0
-        feedback_left = self.num_feed < self.max_feed
         buffer_empty = len(self.buffer.episodes) == 0
+        if not buffer_empty and self.num_steps_first_train is None:
+            self.num_steps_first_train = self.num_timesteps
 
-        if checkpoint_reached and feedback_left and not buffer_empty:
+        should_train = self.num_steps_first_train is not None
+        checkpoint_reached = should_train and (self.num_timesteps - self.num_steps_first_train) % self.n_steps_reward == 0
+        feedback_left = self.num_feed < self.max_feed
+
+        if checkpoint_reached and feedback_left:
             self._expand_data()
             self._train_predictor()
             self._on_event()
