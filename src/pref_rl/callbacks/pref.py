@@ -99,4 +99,6 @@ class BasePrefCallback(RewardModifierCallback, ABC):
                 self.has_trained = True
                 if self.on_first_train: self.on_first_train()
 
+            self.logger.dump(step=self.num_timesteps)
+
         return True if not self.has_trained else super()._on_step()

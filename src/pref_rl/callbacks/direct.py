@@ -83,3 +83,4 @@ class DIRECTCallback(BaseDiscriminatorCallback):
         self.logger.record('direct/buffer/n_updates', self.si_buffer.n_updates)
         self.logger.record('direct/buffer/ep_rew_mean', np.mean([ret for ret, _, _ in self.si_buffer.episodes]))
         self._train_discriminator()
+        self.logger.dump(step=self.num_timesteps)
