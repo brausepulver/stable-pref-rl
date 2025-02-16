@@ -11,6 +11,7 @@ method:
     n_epochs_unsuper: 50
 
   pref:
+    device: cpu
     n_epochs_reward: 100
     train_acc_threshold_reward: 0.97
     learning_rate_reward: 3.e-4
