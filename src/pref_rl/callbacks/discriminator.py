@@ -95,8 +95,8 @@ class BaseDiscriminatorCallback(RewardModifierCallback, ABC):
                 losses.append(loss.item())
                 accuracies.append(accuracy)
 
-        self.logger.record(f'discriminator/train/loss', np.mean(losses))
-        self.logger.record(f'discriminator/train/accuracy', np.mean(accuracies))
+        self.logger.record('discriminator/train/loss', np.mean(losses))
+        self.logger.record('discriminator/train/accuracy', np.mean(accuracies))
 
 
     def _predict_rewards(self):

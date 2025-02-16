@@ -65,7 +65,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.preference_buffer = torch.cat([self.preference_buffer, preferences])
         
         self.num_feed += len(keep_indices)
-        self.logger.record(f'pref/num_feed', self.num_feed)
+        self.logger.record('pref/num_feed', self.num_feed)
 
 
     @abstractmethod

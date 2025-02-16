@@ -58,8 +58,8 @@ class RewardModifierCallback(EventCallback):
             if ep_info is None:
                 continue
 
-            ep_mean_pred_r = np.mean(self.pred_reward_buffer[env_idx])
-            ep_info[self.ep_info_key] = ep_mean_pred_r
+            ep_return = sum(self.pred_reward_buffer[env_idx])
+            ep_info[self.ep_info_key] = ep_return
             self.pred_reward_buffer[env_idx] = []
 
 
