@@ -75,7 +75,7 @@ class Sampler:
 
 
     def sample_segments(self, episodes: list, num_samples: int, method: str = 'uniform', reward_model: callable = None):
-        assert method in ('uniform', 'disagree', 'entropy'), f"Unknown sampling method: {method}"
+        assert method in ('uniform', 'disagreement', 'entropy'), f"Unknown sampling method: {method}"
 
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
 
@@ -107,7 +107,7 @@ class Sampler:
             member_returns = einops.reduce(member_rewards, 'm n1 n2 s 1 -> m n1 n2', 'sum')
             probabilities = F.softmax(member_returns, dim=-1)
 
-            if method == 'disagree':
+            if method == 'disagreement':
                 metric = probabilities[:, 0].std(dim=0)
             elif method == 'entropy':
                 entropy = -torch.sum(probabilities * torch.log(probabilities), dim=-1)
