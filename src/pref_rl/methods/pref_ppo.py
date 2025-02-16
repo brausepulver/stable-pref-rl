@@ -12,7 +12,7 @@ class PrefPPO(PPO):
 
         self.unsuper_kwargs = unsuper
         self.pref_kwargs = pref
-        self.unsuper_enabled = self.unsuper_kwargs['n_steps_unsuper'] > 0
+        self.unsuper_enabled = self.unsuper_kwargs['n_steps_unsuper'] is not None
 
         if not self.unsuper_enabled:
             self.n_steps_default = kwargs['n_steps']
@@ -49,7 +49,7 @@ class PrefPPO(PPO):
 
         callbacks = [
             PrefPPOCallback(
-                n_steps_first_train=self.unsuper_kwargs['n_steps_unsuper'],
+                n_steps_first_train=self.unsuper_kwargs['n_steps_unsuper'] or None,
                 on_first_train=on_first_pref_ppo_train,
                 **self.pref_kwargs
             ),

@@ -20,3 +20,5 @@ train preset=pref_ppo/quadruped_walk
 ```
 
 Other presets are available in config/presets.
+
+Unsupervised pre-training (see [PEBBLE](https://arxiv.org/abs/2106.05091)) is enabled by default for PrefPPO, PEBBLE and PrefDIRECT. Disable by setting `preset.method.unsuper.n_steps_unsuper=null`.

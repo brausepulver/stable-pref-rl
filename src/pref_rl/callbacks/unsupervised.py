@@ -44,7 +44,7 @@ class UnsupervisedCallback(RewardModifierCallback):
 
 
     def _on_step(self):
-        if self.num_timesteps > self.n_steps_unsuper:
+        if self.n_steps_unsuper is None or self.num_timesteps > self.n_steps_unsuper:
             return True
 
         obs = self._get_unnormalized_obs()
@@ -57,7 +57,7 @@ class UnsupervisedCallback(RewardModifierCallback):
 
 
     def _on_rollout_end(self):
-        if self.num_timesteps > self.n_steps_unsuper:
+        if self.n_steps_unsuper is None or self.num_timesteps > self.n_steps_unsuper:
             self._clean_up()
             return
 
