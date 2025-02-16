@@ -96,19 +96,19 @@ class Sampler:
         obs, act, gt_rewards = torch.split(torch.stack(segments), (self.observation_size, self.action_size, 1), dim=-1)
         state_actions = torch.cat([obs, act], dim=-1)
 
-        split_state_actions = einops.rearrange(state_actions, '(n1 n2) s d -> n1 n2 s d', n2=2)
-        split_rewards = einops.rearrange(gt_rewards, '(n1 n2) s 1 -> n2 n1 s', n2=2)
+        split_state_actions = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
+        split_rewards = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
 
         if method == 'uniform':
             return split_state_actions, split_rewards
 
         with torch.no_grad():
             member_rewards = reward_model(split_state_actions)
-            member_returns = einops.reduce(member_rewards, 'm n1 n2 s 1 -> m n1 n2', 'sum')
+            member_returns = einops.reduce(member_rewards, 'm n p s 1 -> m n p', 'sum')
             probabilities = F.softmax(member_returns, dim=-1)
 
             if method == 'disagreement':
-                metric = probabilities[:, 0].std(dim=0)
+                metric = probabilities[..., 0].std(dim=0)
             elif method == 'entropy':
                 entropy = -torch.sum(probabilities * torch.log(probabilities), dim=-1)
                 metric = entropy.mean(dim=0)
