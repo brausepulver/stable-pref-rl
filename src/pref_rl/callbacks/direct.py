@@ -7,13 +7,13 @@ from .discriminator import BaseDiscriminatorCallback
 
 
 class StepBuffer:
-    def __init__(self, num_envs: int, num_steps: int):
-        self._env_buffer = [[] for _ in range(num_envs)]
+    def __init__(self, n_envs: int, n_steps: int):
+        self._env_buffer = [[] for _ in range(n_envs)]
         self.episodes = []
-        self.max_steps = num_steps
-        self.n_steps = 0
-        self.n_updates = 0
-        self._n_update_attempts = 0
+        self.max_steps = n_steps
+        self.num_steps = 0
+        self.num_updates = 0
+        self._num_update_attempts = 0
 
 
     def add(self, value: torch.Tensor, done: np.ndarray):
@@ -24,21 +24,21 @@ class StepBuffer:
             episode = torch.stack(self._env_buffer[env_idx])
             ep_return = episode[:, -1].sum().item()
 
-            heapq.heappush(self.episodes, (ep_return, -self._n_update_attempts, episode))  # Number of update attempts as tiebreaker, prioritize older samples
+            heapq.heappush(self.episodes, (ep_return, -self._num_update_attempts, episode))  # Number of update attempts as tiebreaker, prioritize older samples
             self._env_buffer[env_idx].clear()
-            self.n_steps += len(episode)
-            self._n_update_attempts += 1
+            self.num_steps += len(episode)
+            self._num_update_attempts += 1
 
             if episode is not self.episodes[0][2]:
-                self.n_updates += 1
+                self.num_updates += 1
 
             self._trim_episodes()
 
 
     def _trim_episodes(self):
-        while self.n_steps - (least_ep_len := len(self.episodes[0][2])) >= self.max_steps:
+        while self.num_steps - (least_ep_len := len(self.episodes[0][2])) >= self.max_steps:
             heapq.heappop(self.episodes)
-            self.n_steps -= least_ep_len
+            self.num_steps -= least_ep_len
 
 
 class DIRECTCallback(BaseDiscriminatorCallback):
@@ -80,7 +80,7 @@ class DIRECTCallback(BaseDiscriminatorCallback):
 
 
     def _on_rollout_end(self):
-        self.logger.record('direct/buffer/n_updates', self.si_buffer.n_updates)
+        self.logger.record('direct/buffer/n_updates', self.si_buffer.num_updates)
         self.logger.record('direct/buffer/ep_rew_mean', np.mean([ret for ret, _, _ in self.si_buffer.episodes]))
         self._train_discriminator()
         self.logger.dump(step=self.num_timesteps)

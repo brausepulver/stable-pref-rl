@@ -1,10 +1,11 @@
+import einops
+import itertools
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
-import einops
-from ..utils.model import build_layered_module
 from .pref import BasePrefCallback
+from ..utils.model import build_layered_module
 from ..utils.pref import Teacher
 
 
@@ -30,6 +31,7 @@ class PrefPPOCallback(BasePrefCallback):
         learning_rate_reward: float = 3e-4,
         batch_size_reward: int = 128,
         reward_model_kwargs: dict = {},
+        n_steps_eval_current: int = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -39,6 +41,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.batch_size_reward = batch_size_reward
         self.reward_model_kwargs = reward_model_kwargs
         self.lr_reward = learning_rate_reward
+        self.n_steps_eval_current = n_steps_eval_current or self.n_steps_reward
 
         self.device = torch.device(
             device or
@@ -122,15 +125,13 @@ class PrefPPOCallback(BasePrefCallback):
         self.logger.record('reward_model/train/epochs', epoch + 1)
 
         with torch.no_grad():
-            self._validate_reward_model()
+            self._validate_total()
 
         self.reward_model.to(self.model.device)
 
 
-    def _validate_reward_model(self):
-        self.reward_model.eval()
-
-        segments, rewards = self.sampler.sample_segments(self.buffer.episodes, len(self.segment_buffer), 'uniform', self.reward_model)
+    def _validate_on_episodes(self, episodes, size: int):
+        segments, rewards = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
 
         dataset = TensorDataset(segments[keep_indices], preferences)
@@ -139,8 +140,24 @@ class PrefPPOCallback(BasePrefCallback):
         batch_statistics = [self._compute_loss_for_member(member, *batch) for batch in dataloader for member in self.reward_model.members]
         batch_losses, batch_accuracies = zip(*batch_statistics)
 
-        self.logger.record('reward_model/eval/loss', torch.tensor(batch_losses).mean().item())
-        self.logger.record('reward_model/eval/accuracy', torch.tensor(batch_accuracies).mean().item())
+        return torch.tensor(batch_losses).mean().item(), torch.tensor(batch_accuracies).mean().item()
+
+
+    def _validate_total(self):
+        self.reward_model.eval()
+
+        loss_total, accuracy_total = self._validate_on_episodes(self.buffer.episodes, len(self.segment_buffer))
+        self.logger.record('reward_model/eval/loss', loss_total)
+        self.logger.record('reward_model/eval/accuracy', accuracy_total)
+
+
+    def _validate_current(self):
+        total_lens = itertools.accumulate(len(ep) for ep in reversed(self.buffer.episodes))
+        recent_eps = [ep for ep, total in zip(reversed(self.buffer.episodes), total_lens) if total <= self.n_steps_reward]
+
+        loss_current, accuracy_current = self._validate_on_episodes(recent_eps, int(0.2 * sum(len(ep) for ep in recent_eps) / self.segment_size))
+        self.logger.record('reward_model/eval/loss_current', loss_current)
+        self.logger.record('reward_model/eval/accuracy_current', accuracy_current)
 
 
     def _predict_rewards(self):
@@ -151,3 +168,16 @@ class PrefPPOCallback(BasePrefCallback):
 
         with torch.no_grad():
             return self.reward_model(state_actions).mean(dim=0)
+
+
+    def _on_step(self):
+        continue_training = super()._on_step()
+        if not continue_training: return False
+
+        checkpoint_reached = self.num_timesteps % self.n_steps_eval_current == 0
+        if self.has_trained and checkpoint_reached:
+            with torch.no_grad():
+                self._validate_current()
+            self.logger.dump(step=self.num_timesteps)
+
+        return True

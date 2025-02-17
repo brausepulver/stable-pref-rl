@@ -6,9 +6,9 @@ import torch.nn.functional as F
 
 
 class EpisodeBuffer:
-    def __init__(self, num_envs, num_episodes):
-        self._env_buffer = [[] for _ in range(num_envs)]
-        self.episodes = deque(maxlen=num_episodes)
+    def __init__(self, n_envs, n_episodes):
+        self._env_buffer = [[] for _ in range(n_envs)]
+        self.episodes = deque(maxlen=n_episodes)
 
 
     def add(self, value: torch.Tensor, done: np.ndarray):

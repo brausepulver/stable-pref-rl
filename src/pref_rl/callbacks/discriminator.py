@@ -20,7 +20,7 @@ class Discriminator(nn.Module):
 class BaseDiscriminatorCallback(RewardModifierCallback, ABC):
     def __init__(self,
         n_epochs_disc: int = 10,
-        learning_rate_disc: float = 2e-4,
+        learning_rate_disc: float = 3e-4,
         batch_size_disc: int = 128,
         disc_kwargs: dict = {},
         reward_mixture_coef: float = 0.5,
