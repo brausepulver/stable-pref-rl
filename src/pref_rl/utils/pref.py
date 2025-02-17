@@ -29,9 +29,10 @@ class Teacher:
         self.beta = teacher_kwargs.get('beta', 1 if teacher == 'stoc' else float('inf'))
         self.gamma = teacher_kwargs.get('gamma', 0.9 if teacher == 'myopic' else 1)
         self.eps_mistake = teacher_kwargs.get('eps_mistake', 0.1 if teacher == 'mistake' else 0)
-        self.eps_equal = teacher_kwargs.get('eps_equal')
-        self.eps_skip = teacher_kwargs.get('eps_skip')
 
+        eps_adapt = 0.1
+        self.eps_equal = teacher_kwargs.get('eps_equal', eps_adapt if teacher == 'equal' else 0)
+        self.eps_skip = teacher_kwargs.get('eps_skip', eps_adapt if teacher == 'skip' else 0)
         self.threshold_equal = 0
         self.threshold_skip = 0
 

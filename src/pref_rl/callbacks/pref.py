@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-import gymnasium as gym
+import itertools
 import torch
 from .reward_mod import RewardModifierCallback
 from ..utils.pref import EpisodeBuffer, Teacher, Sampler
@@ -18,6 +18,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         log_prefix='pref/',
         n_steps_first_train: int = None,
         on_first_train: callable = None,
+        margins_stats_window_size: int = 100,
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
@@ -32,6 +33,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.teacher_kwargs = teacher_kwargs
         self.n_steps_first_train = n_steps_first_train
         self.on_first_train = on_first_train
+        self.margins_stats_window_size = margins_stats_window_size
+
+        assert self.ann_buffer_size_eps is None or self.margins_stats_window_size <= self.ann_buffer_size_eps
 
         self.has_trained = False
         self.num_feed = 0
@@ -79,7 +83,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.buffer.add(annotations, self.locals['dones'])
 
         if self.locals['dones'].any():
-            self.teacher.update_thresholds(self.buffer.episodes)
+            recent_eps = list(itertools.islice(reversed(self.buffer.episodes), self.margins_stats_window_size))
+            self.teacher.update_thresholds(recent_eps)
 
         buffer_empty = len(self.buffer.episodes) == 0
         if not buffer_empty and self.n_steps_first_train is None:

@@ -7,10 +7,12 @@ method:
     max_feed: 2_000
     feed_batch_size: 200
 
-    teacher: oracle
-    teacher_kwargs:
-      beta: .inf
-      gamma: 1
-      eps_mistake: 0
-      eps_equal: 0
-      eps_skip: 0
+    teacher: oracle  # One of oracle, stoc, mistake, skip, equal, myopic
+
+    # Can also set individual teacher parameters by commenting in below:
+    # teacher_kwargs:
+    #   beta: .inf
+    #   gamma: 1
+    #   eps_mistake: 0
+    #   eps_equal: 0
+    #   eps_skip: 0
