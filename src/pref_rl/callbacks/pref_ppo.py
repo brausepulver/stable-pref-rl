@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, TensorDataset
 import einops
 from ..utils.model import build_layered_module
 from .pref import BasePrefCallback
+from ..utils.pref import Teacher
 
 
 class RewardModel(nn.Module):
@@ -50,10 +51,12 @@ class PrefPPOCallback(BasePrefCallback):
     def _init_callback(self):
         super()._init_callback()
 
-        input_dim = sum(self._get_input_sizes())
-        self.reward_model = RewardModel(input_dim, **self.reward_model_kwargs)
+        obs_size, act_size = self._get_input_sizes()
+        self.reward_model = RewardModel(obs_size + act_size, **self.reward_model_kwargs)
         self.rew_loss = nn.CrossEntropyLoss()
         self.rew_optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=self.lr_reward)
+
+        self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
 
 
     def _get_predictor(self):
@@ -128,7 +131,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.reward_model.eval()
 
         segments, rewards = self.sampler.sample_segments(self.buffer.episodes, len(self.segment_buffer), 'uniform', self.reward_model)
-        preferences, keep_indices = self.teacher.query_segments(rewards)
+        preferences, keep_indices = self.eval_teacher.query_segments(rewards)
 
         dataset = TensorDataset(segments[keep_indices], preferences)
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')

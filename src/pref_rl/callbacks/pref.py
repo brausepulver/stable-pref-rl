@@ -22,14 +22,14 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
-        
+
         self.n_steps_reward = n_steps_reward
         self.ann_buffer_size_eps = ann_buffer_size_eps
         self.sampling_method = sampler
         self.segment_size = segment_size
         self.max_feed = max_feed
         self.feed_batch_size = feed_batch_size
-        self.teacher = teacher
+        self.train_teacher = teacher
         self.teacher_kwargs = teacher_kwargs
         self.n_steps_first_train = n_steps_first_train
         self.on_first_train = on_first_train
@@ -47,7 +47,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         obs_size, act_size = self._get_input_sizes()
         self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps)
         self.sampler = Sampler(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size)
-        self.teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.teacher, teacher_kwargs=self.teacher_kwargs)
+        self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
         self.segment_buffer = torch.empty((0, 2, self.segment_size, segment_dim))
@@ -63,11 +63,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
         state_actions, rewards = self.sampler.sample_segments(self.buffer.episodes, num_samples, sampling_method, self._get_predictor())
 
-        preferences, keep_indices = self.teacher.query_segments(rewards)
+        preferences, keep_indices = self.train_teacher.query_segments(rewards)
 
         self.segment_buffer = torch.cat([self.segment_buffer, state_actions[keep_indices]])
         self.preference_buffer = torch.cat([self.preference_buffer, preferences])
-        
+
         self.num_feed += len(keep_indices)
         self.logger.record('pref/num_feed', self.num_feed)
 
@@ -84,7 +84,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         if self.locals['dones'].any():
             recent_eps = list(itertools.islice(reversed(self.buffer.episodes), self.margins_stats_window_size))
-            self.teacher.update_thresholds(recent_eps)
+            self.train_teacher.update_thresholds(recent_eps)
 
         buffer_empty = len(self.buffer.episodes) == 0
         if not buffer_empty and self.n_steps_first_train is None:
