@@ -52,13 +52,13 @@ class UnsupervisedCallback(RewardModifierCallback):
         return super()._on_step()
 
 
-    def _clean_up(self):
+    def _run_cleanup(self):
         self._buffer = None
 
 
     def _on_rollout_end(self):
         if self.n_steps_unsuper is None or self.num_timesteps > self.n_steps_unsuper:
-            self._clean_up()
+            self._run_cleanup()
             return
 
         super()._on_rollout_end()

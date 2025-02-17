@@ -59,8 +59,8 @@ class Teacher:
         if self.beta == float('inf'):
             preferences = (left_ret < right_ret).to(dtype=torch.long)
         else:
-            probabilities = F.softmax(returns, dim=0)
-            preferences = torch.bernoulli(probabilities[0]).to(dtype=torch.long)
+            probabilities = F.softmax(self.beta * returns, dim=0)
+            preferences = torch.bernoulli(probabilities[1]).to(dtype=torch.long)
 
         equal_indices = torch.argwhere(torch.abs(left_ret - right_ret) < self.threshold_equal).squeeze(-1)
         preferences[equal_indices] = 0.5
