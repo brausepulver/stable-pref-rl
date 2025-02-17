@@ -47,7 +47,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         obs_size, act_size = self._get_input_sizes()
         self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps)
         self.sampler = Sampler(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size)
-        self.teacher = Teacher(segment_size=self.segment_size, teacher=self.teacher, teacher_kwargs=self.teacher_kwargs)
+        self.teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.teacher, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
         self.segment_buffer = torch.empty((0, 2, self.segment_size, segment_dim))

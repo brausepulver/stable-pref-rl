@@ -22,9 +22,11 @@ class EpisodeBuffer:
 
 
 class Teacher:
-    def __init__(self, segment_size: int, teacher: str = None, teacher_kwargs: dict = None):
+    def __init__(self, segment_size: int, observation_size: int, action_size: int, teacher: str = None, teacher_kwargs: dict = None):
         teacher_kwargs = teacher_kwargs or {}
         self.segment_size = segment_size
+        self.observation_size = observation_size
+        self.action_size = action_size
 
         self.beta = teacher_kwargs.get('beta', 1 if teacher == 'stoc' else float('inf'))
         self.gamma = teacher_kwargs.get('gamma', 0.9 if teacher == 'myopic' else 1)
@@ -38,11 +40,12 @@ class Teacher:
 
 
     def update_thresholds(self, episodes):
-        ep_lens, ep_rets = zip(*[(len(ep), sum(ep)) for ep in episodes])
-        margin = np.mean(ep_rets) * self.segment_size / np.mean(ep_lens)
+        _, gt_rewards = torch.split(torch.stack(episodes), (self.observation_size + self.action_size, 1), dim=-1)
+        ep_lens, ep_rets = zip(*[(len(ep_rewards), sum(ep_rewards)) for ep_rewards in gt_rewards])
 
-        self.threshold_equal = margin * self.eps_equal if self.eps_equal else 0
-        self.threshold_skip = margin * self.eps_skip if self.eps_skip else 0
+        margin = np.mean(ep_rets) * self.segment_size / np.mean(ep_lens)
+        self.threshold_equal = margin * self.eps_equal
+        self.threshold_skip = margin * self.eps_skip
 
 
     def query_segments(self, gt_rewards: torch.Tensor):
