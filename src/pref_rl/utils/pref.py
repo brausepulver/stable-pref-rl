@@ -62,6 +62,9 @@ class Teacher:
             probabilities = F.softmax(self.beta * returns, dim=0)
             preferences = torch.bernoulli(probabilities[1]).to(dtype=torch.long)
 
+        mistake_indices = torch.argwhere(torch.distributions.Bernoulli(self.eps_mistake).sample(preferences.shape))
+        preferences[mistake_indices] = 1 - preferences[mistake_indices]
+
         equal_indices = torch.argwhere(torch.abs(left_ret - right_ret) < self.threshold_equal).squeeze(-1)
         preferences[equal_indices] = 0.5
 
