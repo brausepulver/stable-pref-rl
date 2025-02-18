@@ -50,22 +50,8 @@ class BaseDiscriminatorCallback(RewardModifierCallback, ABC):
 
 
     @abstractmethod
-    def _get_positive_samples(self):
-        raise NotImplementedError
-
-
-    @abstractmethod
-    def _get_negative_samples(self, batch_size: int):
-        raise NotImplementedError
-
-
     def _build_dataset(self):
-        positive_samples = self._get_positive_samples()
-        negative_samples = self._get_negative_samples(len(positive_samples))
-
-        samples = torch.cat([positive_samples, negative_samples])
-        labels = torch.cat([torch.ones(len(positive_samples)), torch.zeros(len(negative_samples))])
-        return TensorDataset(samples, labels)
+        raise NotImplementedError
 
 
     def _compute_disc_loss(self, inputs, labels):

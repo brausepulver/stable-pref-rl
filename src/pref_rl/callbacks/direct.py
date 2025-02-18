@@ -3,6 +3,7 @@ import heapq
 import numpy as np
 from stable_baselines3.common.buffers import RolloutBuffer
 import torch
+from torch.utils.data import TensorDataset
 from .discriminator import BaseDiscriminatorCallback
 
 
@@ -68,9 +69,18 @@ class DIRECTCallback(BaseDiscriminatorCallback):
         return best_steps[:self.si_buffer_size_steps]
 
 
-    def _get_negative_samples(self, batch_size):
-        rollout_step_indices = torch.randint(0, self.model.rollout_buffer.pos, (batch_size,))
+    def _get_negative_samples(self, size: int):
+        rollout_step_indices = torch.randint(0, self.model.rollout_buffer.pos, (size,))
         return self._get_rollout_steps()[rollout_step_indices]
+
+
+    def _build_dataset(self):
+        positive_samples = self._get_positive_samples()
+        negative_samples = self._get_negative_samples(len(positive_samples))
+
+        samples = torch.cat([positive_samples, negative_samples])
+        labels = torch.cat([torch.ones(len(positive_samples)), torch.zeros(len(negative_samples))])
+        return TensorDataset(samples, labels)
 
 
     def _on_step(self):

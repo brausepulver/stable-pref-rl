@@ -97,17 +97,22 @@ class PrefDIRECTCallback(RewardModifierCallback):
         return steps
 
 
-    def _get_positive_samples(self):
-        return self._get_steps_from_preferences(self.preference_buffer == 1)
+    def _get_positive_samples(self, size: int = None):
+        steps = self._get_steps_from_preferences(self.preference_buffer == 1)
+        indices = torch.randperm(len(steps))[:size]
+        return steps[indices]
 
 
-    def _get_negative_samples(self):
-        return self._get_steps_from_preferences(self.preference_buffer == 0)
+    def _get_negative_samples(self, size: int = None):
+        obs_size, act_size = self._get_input_sizes()
+        recent_steps = torch.cat(list(self.buffer.episodes))[-size:]
+        steps, _ = torch.split(recent_steps, (obs_size + act_size, 1), dim=-1)
+        return steps
 
 
     def _build_dataset(self):
         positive_samples = self._get_positive_samples()
-        negative_samples = self._get_negative_samples()
+        negative_samples = self._get_negative_samples(len(positive_samples))
         samples = torch.cat([positive_samples, negative_samples])
         labels = torch.cat([torch.ones(len(positive_samples)), torch.zeros(len(negative_samples))])
         return TensorDataset(samples, labels)
