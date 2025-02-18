@@ -13,13 +13,11 @@ class UnsupervisedCallback(RewardModifierCallback):
         self.n_epochs_unsuper = n_epochs_unsuper
         self.n_neighbors = n_neighbors
 
-
-    def _init_callback(self):
-        self._buffer = deque(maxlen=self.n_steps_unsuper)
+        self._buffer = []
 
 
     def _estimate_state_entropy(self, obs: torch.Tensor):
-        all_obs = einops.rearrange(torch.stack(list(self._buffer)), 'n e d -> (n e) d')
+        all_obs = einops.rearrange(torch.stack(self._buffer), 'n e d -> (n e) d')
 
         differences = obs.unsqueeze(1) - all_obs
         distances = torch.norm(differences, dim=-1)
@@ -44,7 +42,7 @@ class UnsupervisedCallback(RewardModifierCallback):
 
 
     def _on_step(self):
-        if self.n_steps_unsuper is None or self.num_timesteps > self.n_steps_unsuper:
+        if self.num_timesteps > self.n_steps_unsuper:
             return True
 
         obs = self._get_unnormalized_obs()
@@ -57,7 +55,7 @@ class UnsupervisedCallback(RewardModifierCallback):
 
 
     def _on_rollout_end(self):
-        if self.n_steps_unsuper is None or self.num_timesteps > self.n_steps_unsuper:
+        if self.num_timesteps > self.n_steps_unsuper:
             self._run_cleanup()
             return
 

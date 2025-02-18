@@ -53,7 +53,7 @@ class PrefPPO(PPO):
                 on_first_train=on_first_pref_ppo_train,
                 **self.pref_kwargs
             ),
-            UnsupervisedCallback(**self.unsuper_kwargs),
+            *([UnsupervisedCallback(**self.unsuper_kwargs)] if self.unsuper_enabled else []),
             get_default_callbacks()
         ]
 

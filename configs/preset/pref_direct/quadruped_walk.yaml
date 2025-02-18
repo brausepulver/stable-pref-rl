@@ -7,6 +7,10 @@ defaults:
 method:
   _target_: pref_rl.methods.pref_direct.PrefDIRECT
 
+  unsuper:
+    n_steps_unsuper: 32_000
+    n_epochs_unsuper: 50
+
   pref:
     sampler: uniform
 
