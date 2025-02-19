@@ -57,10 +57,10 @@ class Teacher:
         left_ret, right_ret = returns
 
         if self.beta == float('inf'):
-            preferences = (left_ret < right_ret).to(dtype=torch.long)
+            preferences = (left_ret < right_ret).to(dtype=torch.float)
         else:
             probabilities = F.softmax(self.beta * returns, dim=0)
-            preferences = torch.bernoulli(probabilities[1]).to(dtype=torch.long)
+            preferences = torch.bernoulli(probabilities[1]).to(dtype=torch.float)
 
         mistake_indices = torch.argwhere(torch.distributions.Bernoulli(self.eps_mistake).sample(preferences.shape))
         preferences[mistake_indices] = 1 - preferences[mistake_indices]
@@ -70,6 +70,7 @@ class Teacher:
 
         keep_indices = torch.argwhere(torch.max(torch.abs(returns) >= self.threshold_skip, dim=0).values).squeeze(-1)
         preferences = preferences[keep_indices]
+
         return preferences, keep_indices
 
 

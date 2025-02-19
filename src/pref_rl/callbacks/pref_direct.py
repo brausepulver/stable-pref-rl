@@ -78,7 +78,7 @@ class PrefDIRECTCallback(RewardModifierCallback):
 
         segment_dim = obs_size + act_size
         self.segment_buffer = torch.empty((0, 2, self.segment_size, segment_dim))
-        self.preference_buffer = torch.empty((0,), dtype=torch.long)
+        self.preference_buffer = torch.empty((0,))
 
         input_dim = obs_size + act_size + (1 if self.use_rewards_as_features else 0)
         self.discriminator = Discriminator(input_dim, **self.disc_kwargs)
@@ -91,18 +91,18 @@ class PrefDIRECTCallback(RewardModifierCallback):
 
 
     def _get_steps_from_preferences(self, preferences: torch.Tensor):
-        indices = (torch.arange(len(self.segment_buffer)), preferences)
+        indices = (torch.arange(len(self.segment_buffer)), preferences.to(dtype=torch.long))
         segments = self.segment_buffer[indices]
         steps = einops.rearrange(segments, 'l s d -> (l s) d')
         return steps
 
 
     def _get_positive_samples(self):
-        return self._get_steps_from_preferences(self.preference_buffer)
+        return self._get_steps_from_preferences(self.preference_buffer == 1)
 
 
     def _get_negative_samples(self):
-        return self._get_steps_from_preferences(1 - self.preference_buffer)
+        return self._get_steps_from_preferences(self.preference_buffer == 0)
 
 
     def _build_dataset(self):

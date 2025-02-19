@@ -51,7 +51,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         segment_dim = obs_size + act_size
         self.segment_buffer = torch.empty((0, 2, self.segment_size, segment_dim))
-        self.preference_buffer = torch.empty((0,), dtype=torch.long)
+        self.preference_buffer = torch.empty((0,))
 
 
     @abstractmethod

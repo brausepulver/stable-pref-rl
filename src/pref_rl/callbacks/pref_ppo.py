@@ -56,10 +56,13 @@ class PrefPPOCallback(BasePrefCallback):
 
         obs_size, act_size = self._get_input_sizes()
         self.reward_model = RewardModel(obs_size + act_size, **self.reward_model_kwargs)
-        self.rew_loss = nn.CrossEntropyLoss()
         self.rew_optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=self.lr_reward)
 
         self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
+
+        self.is_equal_teacher = self.train_teacher.eps_equal > 0
+        soft_ce_loss = lambda log_probs, targets: -(targets * log_probs).sum(dim=-1).mean()
+        self.disc_loss = soft_ce_loss if self.is_equal_teacher else nn.CrossEntropyLoss()
 
 
     def _get_predictor(self):
@@ -75,9 +78,16 @@ class PrefPPOCallback(BasePrefCallback):
     def _compute_loss_for_member(self, member: nn.Module, segments: torch.Tensor, preferences: torch.Tensor):
         segments = segments.to(self.device)
         preferences = preferences.to(self.device)
+
         pred_rewards = member(segments)
         pred_returns = einops.reduce(pred_rewards, 'b n s 1 -> b n', 'sum')
-        loss = self.rew_loss(pred_returns, preferences)
+
+        if self.is_equal_teacher:
+            probabilities = torch.log_softmax(pred_returns, dim=-1)[..., 1]
+            loss = self.disc_loss(probabilities, preferences)
+        else:
+            loss = self.disc_loss(pred_returns, preferences.to(dtype=torch.long))
+
         accuracy = self._calculate_accuracy(pred_returns, preferences)
         return loss, accuracy
 
