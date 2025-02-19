@@ -14,10 +14,19 @@ class PrefDIRECT(PPO):
 
 
     def learn(self, *args, callback=None, **kwargs):
+        def on_first_pref_direct_train():
+            self.policy.init_weights(self.policy.value_net)
+
         callbacks = [
-            PrefDIRECTCallback(pref_kwargs=self.pref_kwargs, direct_kwargs=self.direct_kwargs),
+            PrefDIRECTCallback(
+                n_steps_first_train=self.unsuper_kwargs['n_steps_unsuper'] or None,
+                on_first_train=on_first_pref_direct_train,
+                **self.pref_kwargs,
+                **self.direct_kwargs
+            ),
             UnsupervisedCallback(**self.unsuper_kwargs),
             get_default_callbacks()
         ]
+
         callback_list = CallbackList(([callback] if callback is not None else []) + callbacks)
         return super().learn(*args, callback=callback_list, **kwargs)
