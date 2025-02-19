@@ -187,9 +187,10 @@ class PrefDIRECTCallback(RewardModifierCallback):
         checkpoint_reached = should_train and (self.num_timesteps - self.n_steps_first_train) % self.n_steps_reward == 0
         feedback_left = self.num_feed < self.max_feed
 
-        if checkpoint_reached and feedback_left:
+        if checkpoint_reached:
             sampling_method = 'uniform' if not self.has_trained else self.sampling_method
-            self._expand_data(sampling_method)
+            if feedback_left:
+                self._expand_data(sampling_method)
             self._train_predictor()
             self._on_event()
 
