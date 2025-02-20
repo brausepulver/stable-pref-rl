@@ -141,6 +141,9 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_on_episodes(self, episodes, size: int):
+        self.reward_model.eval()
+        self.reward_model.to(self.device)
+
         segments, rewards = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
 
@@ -150,12 +153,12 @@ class PrefPPOCallback(BasePrefCallback):
         batch_statistics = [self._compute_loss_for_member(member, *batch) for batch in dataloader for member in self.reward_model.members]
         batch_losses, batch_accuracies = zip(*batch_statistics)
 
+        self.reward_model.to(self.model.device)
+
         return torch.tensor(batch_losses).mean().item(), torch.tensor(batch_accuracies).mean().item()
 
 
     def _validate_total(self):
-        self.reward_model.eval()
-
         loss_total, accuracy_total = self._validate_on_episodes(self.buffer.episodes, len(self.segment_buffer))
         self.logger.record('reward_model/eval/loss', loss_total)
         self.logger.record('reward_model/eval/accuracy', accuracy_total)
