@@ -4,6 +4,7 @@ defaults:
 
 method:
   _target_: stable_baselines3.PPO
+  device: cpu
   policy_kwargs:
     net_arch:
       pi: [256, 256, 256]

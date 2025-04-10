@@ -111,7 +111,9 @@ class Sampler:
             return split_state_actions, split_rewards
 
         with torch.no_grad():
-            member_rewards = reward_model(split_state_actions)
+            device = next(reward_model.parameters()).device
+            member_rewards = reward_model(split_state_actions.to(device))
+
             member_returns = einops.reduce(member_rewards, 'm n p s 1 -> m n p', 'sum')
             probabilities = F.softmax(member_returns, dim=-1)
 
@@ -121,5 +123,5 @@ class Sampler:
                 entropy = -torch.sum(probabilities * torch.log(probabilities), dim=-1)
                 metric = entropy.mean(dim=0)
 
-            idx = torch.topk(metric, num_samples).indices
+            idx = torch.topk(metric, num_samples).indices.to('cpu')
             return split_state_actions[idx], split_rewards[:, idx]

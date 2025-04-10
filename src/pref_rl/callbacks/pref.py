@@ -7,6 +7,7 @@ from ..utils.pref import EpisodeBuffer, Teacher, Sampler
 
 class BasePrefCallback(RewardModifierCallback, ABC):
     def __init__(self,
+        device: str = 'cpu',
         n_steps_reward: int = 32_000,
         ann_buffer_size_eps: int = None,
         sampler: str = 'uniform',
@@ -17,8 +18,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         teacher_kwargs: dict = {},
         log_prefix='pref/',
         n_steps_first_train: int = None,
-        on_first_train: callable = None,
+        on_first_trained: callable = None,
         margins_stats_window_size: int = 100,
+        on_trained: callable = None,
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
@@ -32,26 +34,33 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.train_teacher = teacher
         self.teacher_kwargs = teacher_kwargs
         self.n_steps_first_train = n_steps_first_train
-        self.on_first_train = on_first_train
+        self.on_first_trained = on_first_trained
         self.margins_stats_window_size = margins_stats_window_size
+        self.on_trained = on_trained
 
         assert self.ann_buffer_size_eps is None or self.margins_stats_window_size <= self.ann_buffer_size_eps
 
+        self.steps_since_train = 0
         self.has_trained = False
         self.num_feed = 0
 
+        self.device = torch.device(
+            device or
+            'mps' if torch.backends.mps.is_available() else
+            'cuda' if torch.cuda.is_available() else
+            'cpu'
+        )
+
 
     def _init_callback(self):
-        super()._init_callback()
-
         obs_size, act_size = self._get_input_sizes()
         self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps)
         self.sampler = Sampler(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size)
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
-        self.segment_buffer = torch.empty((0, 2, self.segment_size, segment_dim))
-        self.preference_buffer = torch.empty((0,))
+        self.segment_buffer = torch.empty((self.max_feed, 2, self.segment_size, segment_dim), device=self.device)
+        self.preference_buffer = torch.empty((self.max_feed,), device=self.device)
 
 
     @abstractmethod
@@ -63,10 +72,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
         state_actions, rewards = self.sampler.sample_segments(self.buffer.episodes, num_samples, sampling_method, self._get_predictor())
 
-        preferences, keep_indices = self.train_teacher.query_segments(rewards)
+        preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
-        self.segment_buffer = torch.cat([self.segment_buffer, state_actions[keep_indices]])
-        self.preference_buffer = torch.cat([self.preference_buffer, preferences])
+        start, end = self.num_feed, self.num_feed + len(preferences)
+        self.segment_buffer[start:end] = state_actions[keep_indices].detach().to(self.device)
+        self.preference_buffer[start:end] = preferences.detach().to(self.device)
 
         self.num_feed += len(keep_indices)
         self.logger.record('pref/num_feed', self.num_feed)
@@ -87,23 +97,28 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             self.train_teacher.update_thresholds(recent_eps)
 
         buffer_empty = len(self.buffer.episodes) == 0
-        if not buffer_empty and self.n_steps_first_train is None:
+        if self.n_steps_first_train is None and not buffer_empty:
             self.n_steps_first_train = self.num_timesteps
 
-        should_train = self.n_steps_first_train is not None
-        checkpoint_reached = should_train and (self.num_timesteps - self.n_steps_first_train) % self.n_steps_reward == 0
+        should_first_train = not self.has_trained and self.n_steps_first_train is not None and self.steps_since_train > self.n_steps_first_train
+        should_train = self.steps_since_train > self.n_steps_reward
         feedback_left = self.num_feed < self.max_feed
 
-        if checkpoint_reached and feedback_left:
+        if (should_first_train or should_train) and feedback_left:
             sampling_method = 'uniform' if not self.has_trained else self.sampling_method
             self._expand_data(sampling_method)
             self._train_predictor()
-            self._on_event()
+            self.steps_since_train = 0
+
+            if self.on_trained:
+                self.on_trained()
 
             if not self.has_trained:
                 self.has_trained = True
-                if self.on_first_train: self.on_first_train()
+                if self.on_first_trained: self.on_first_trained()
 
             self.logger.dump(step=self.num_timesteps)
+        else:
+            self.steps_since_train += self.training_env.num_envs
 
         return True if not self.has_trained else super()._on_step()

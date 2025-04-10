@@ -3,3 +3,15 @@ defaults:
 
 method:
   _target_: stable_baselines3.SAC
+
+  learning_rate: 1.0e-4
+  batch_size: 1024
+  ent_coef: "auto_0.1"
+  target_update_interval: 2
+  tau: 0.005
+  gamma: 0.99
+
+  device: mps
+  policy_kwargs:
+    net_arch: [1024, 1024]
+    n_critics: 2

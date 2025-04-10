@@ -1,4 +1,3 @@
-from collections import deque
 import einops
 import numpy as np
 from stable_baselines3.common.vec_env import VecNormalize

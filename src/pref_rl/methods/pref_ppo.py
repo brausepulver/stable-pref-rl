@@ -44,13 +44,13 @@ class PrefPPO(PPO):
 
 
     def learn(self, *args, callback=None, **kwargs):
-        def on_first_pref_ppo_train():
+        def on_first_trained():
             self.policy.init_weights(self.policy.value_net)
 
         callbacks = [
             PrefPPOCallback(
                 n_steps_first_train=self.unsuper_kwargs['n_steps_unsuper'] or None,
-                on_first_train=on_first_pref_ppo_train,
+                on_first_trained=on_first_trained,
                 **self.pref_kwargs
             ),
             *([UnsupervisedCallback(**self.unsuper_kwargs)] if self.unsuper_enabled else []),

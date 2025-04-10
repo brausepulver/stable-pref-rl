@@ -1,11 +1,11 @@
 from abc import abstractmethod
 import gymnasium as gym
 import numpy as np
-from stable_baselines3.common.callbacks import EventCallback
+from stable_baselines3.common.callbacks import BaseCallback
 import torch
 
 
-class RewardModifierCallback(EventCallback):
+class RewardModifierCallback(BaseCallback):
     def __init__(self, ep_info_key: str = 'pred_r', log_prefix: str = 'rollout/', log_suffix = 'ep_pred_rew_mean', **kwargs):
         super().__init__(**kwargs)
         self.ep_info_key = ep_info_key
@@ -30,7 +30,8 @@ class RewardModifierCallback(EventCallback):
     def _get_current_step(self):
         maybe_flat_obs = np.array(list(self.model._last_obs.values())) if isinstance(self.model._last_obs, dict) else self.model._last_obs
         obs = torch.tensor(maybe_flat_obs, dtype=torch.float).reshape(self.training_env.num_envs, -1)
-        act = torch.tensor(self.locals['clipped_actions'], dtype=torch.float).reshape(self.training_env.num_envs, -1)
+        env_actions = self.locals.get('clipped_actions', self.locals['actions'])  # These are the final actions in the same shape as passed to the environment
+        act = torch.tensor(env_actions, dtype=torch.float).reshape(self.training_env.num_envs, -1)
         gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float).reshape(self.training_env.num_envs, -1)
         return obs, act, gt_rewards
 

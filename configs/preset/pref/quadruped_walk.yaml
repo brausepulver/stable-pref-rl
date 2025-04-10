@@ -1,7 +1,9 @@
 method:
   pref:
+    device: mps
+
     n_steps_reward: 32_000
-    ann_buffer_size_eps: null
+    ann_buffer_size_eps: 100
     sampler: entropy
     segment_size: 50
     max_feed: 2_000

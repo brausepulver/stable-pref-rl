@@ -26,10 +26,12 @@ class PrefDIRECTCallback(RewardModifierCallback):
         segment_size: int = 50,
         max_feed: int = 2_000,
         feed_batch_size: int = 200,
+        pref_buffer_size_seg: int = 400,
         teacher: str = None,
         teacher_kwargs: dict = {},
         n_steps_first_train: int = None,
-        on_first_train: callable = None,
+        on_first_trained: callable = None,
+        on_trained: callable = None,
         margins_stats_window_size: int = 100,
         n_epochs_disc: int = 10,
         learning_rate_disc: float = 3e-4,
@@ -48,10 +50,12 @@ class PrefDIRECTCallback(RewardModifierCallback):
         self.segment_size = segment_size
         self.max_feed = max_feed
         self.feed_batch_size = feed_batch_size
+        self.pref_buffer_size_seg = pref_buffer_size_seg
         self.train_teacher = teacher
         self.teacher_kwargs = teacher_kwargs
         self.n_steps_first_train = n_steps_first_train
-        self.on_first_train = on_first_train
+        self.on_first_trained = on_first_trained
+        self.on_trained = on_trained
         self.margins_stats_window_size = margins_stats_window_size
 
         self.n_epochs_disc = n_epochs_disc
@@ -155,8 +159,8 @@ class PrefDIRECTCallback(RewardModifierCallback):
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards)
 
-        self.segment_buffer = torch.cat([self.segment_buffer, state_actions[keep_indices]])
-        self.preference_buffer = torch.cat([self.preference_buffer, preferences])
+        self.segment_buffer = torch.cat([self.segment_buffer, state_actions[keep_indices]])[-self.pref_buffer_size_seg:]
+        self.preference_buffer = torch.cat([self.preference_buffer, preferences])[-self.pref_buffer_size_seg:]
 
         self.num_feed += len(keep_indices)
         self.logger.record('pref/num_feed', self.num_feed)
@@ -197,11 +201,13 @@ class PrefDIRECTCallback(RewardModifierCallback):
             if feedback_left:
                 self._expand_data(sampling_method)
             self._train_predictor()
-            self._on_event()
+
+            if self.on_trained:
+                self.on_trained()
 
             if not self.has_trained:
                 self.has_trained = True
-                if self.on_first_train: self.on_first_train()
+                if self.on_first_trained: self.on_first_trained()
 
             self.logger.dump(step=self.num_timesteps)
 

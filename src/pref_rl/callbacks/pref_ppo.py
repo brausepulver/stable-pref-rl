@@ -25,7 +25,6 @@ class RewardModel(nn.Module):
 
 class PrefPPOCallback(BasePrefCallback):
     def __init__(self,
-        device: str = 'cpu',
         n_epochs_reward: int = 100,
         train_acc_threshold_reward: float = 0.97,
         learning_rate_reward: float = 3e-4,
@@ -43,19 +42,12 @@ class PrefPPOCallback(BasePrefCallback):
         self.lr_reward = learning_rate_reward
         self.n_steps_eval_current = n_steps_eval_current or self.n_steps_reward
 
-        self.device = torch.device(
-            device or
-            'mps' if torch.backends.mps.is_available() else
-            'cuda' if torch.cuda.is_available() else
-            'cpu'
-        )
-
 
     def _init_callback(self):
         super()._init_callback()
 
         obs_size, act_size = self._get_input_sizes()
-        self.reward_model = RewardModel(obs_size + act_size, **self.reward_model_kwargs)
+        self.reward_model = RewardModel(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
         self.rew_optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=self.lr_reward)
 
         self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
@@ -93,8 +85,8 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _train_member_epoch(self, member: nn.Module):
-        dataset = TensorDataset(self.segment_buffer, self.preference_buffer)
-        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
+        dataset = TensorDataset(self.segment_buffer[:self.num_feed], self.preference_buffer[:self.num_feed])
+        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
         losses = []
         accuracies = []
 
@@ -117,7 +109,6 @@ class PrefPPOCallback(BasePrefCallback):
 
     def _train_predictor(self):
         self.reward_model.train()
-        self.reward_model.to(self.device)
 
         losses = []
         accuracies = []
@@ -137,12 +128,9 @@ class PrefPPOCallback(BasePrefCallback):
         with torch.no_grad():
             self._validate_total()
 
-        self.reward_model.to(self.model.device)
-
 
     def _validate_on_episodes(self, episodes, size: int):
         self.reward_model.eval()
-        self.reward_model.to(self.device)
 
         segments, rewards = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
@@ -152,8 +140,6 @@ class PrefPPOCallback(BasePrefCallback):
 
         batch_statistics = [self._compute_loss_for_member(member, *batch) for batch in dataloader for member in self.reward_model.members]
         batch_losses, batch_accuracies = zip(*batch_statistics)
-
-        self.reward_model.to(self.model.device)
 
         return torch.tensor(batch_losses).mean().item(), torch.tensor(batch_accuracies).mean().item()
 
@@ -177,10 +163,10 @@ class PrefPPOCallback(BasePrefCallback):
         self.reward_model.eval()
 
         obs, act, _ = self._get_current_step()
-        state_actions = torch.cat([obs, act], dim=-1)
+        state_actions = torch.cat([obs, act], dim=-1).to(self.device)
 
         with torch.no_grad():
-            return self.reward_model(state_actions).mean(dim=0)
+            return self.reward_model(state_actions).mean(dim=0).detach()
 
 
     def _on_step(self):

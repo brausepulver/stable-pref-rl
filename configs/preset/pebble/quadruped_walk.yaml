@@ -5,3 +5,22 @@ defaults:
 
 method:
   _target_: pref_rl.methods.pebble.PEBBLE
+
+  unsuper:
+    n_steps_unsuper: 9_000
+    n_epochs_unsuper: 100
+
+  pref:
+    n_steps_reward: 30_000
+    sampler: disagreement
+
+    n_epochs_reward: 50
+    train_acc_threshold_reward: 0.97
+    learning_rate_reward: 3.e-4
+    batch_size_reward: 128
+    reward_model_kwargs:
+      net_arch: [256, 256, 256]
+      activation_fn:
+        _target_: torch.nn.LeakyReLU
+      output_fn:
+        _target_: torch.nn.Tanh
