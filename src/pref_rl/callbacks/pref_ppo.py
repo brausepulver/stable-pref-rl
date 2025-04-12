@@ -85,7 +85,7 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _train_member_epoch(self, member: nn.Module):
-        dataset = TensorDataset(self.segment_buffer[:self.num_feed], self.preference_buffer[:self.num_feed])
+        dataset = TensorDataset(self.segment_buffer, self.preference_buffer)
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
         losses = []
         accuracies = []

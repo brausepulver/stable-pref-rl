@@ -1,0 +1,28 @@
+defaults:
+  - /preset/sac/quadruped_walk@_here_
+  - /preset/pref/quadruped_walk@_here_
+  - _self_
+
+method:
+  _target_: pref_rl.methods.direct_pebble.DIRECTPEBBLE
+
+  unsuper:
+    n_steps_unsuper: 9_000
+    n_epochs_unsuper: 100
+
+  pref:
+    sampler: uniform
+    ann_buffer_size_eps: 32
+    margins_stats_window_size: 32
+    n_steps_reward: 30_000
+
+  direct:
+    learning_rate_disc: 3.e-4
+    n_epochs_disc: 10
+    reward_mixture_coef: 1.0
+    pref_buffer_size_seg: 200
+
+    disc_kwargs:
+      net_arch: [256, 256, 256]
+      activation_fn:
+        _target_: torch.nn.ReLU
