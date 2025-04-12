@@ -25,6 +25,7 @@ class PrefDIRECTCallback(BasePrefCallback):
         reward_mixture_coef: float = 1.0,
         use_rewards_as_features: bool = False,
         pref_buffer_size_seg: int = 200,
+        keep_training: bool = False,
         **kwargs
     ):
         super().__init__(**kwargs, log_prefix='direct/')
@@ -36,6 +37,7 @@ class PrefDIRECTCallback(BasePrefCallback):
         self.reward_mixture_coef = reward_mixture_coef
         self.use_rewards_as_features = use_rewards_as_features
         self.pref_buffer_size_seg = pref_buffer_size_seg
+        self.keep_training = keep_training
 
 
     def _init_callback(self):

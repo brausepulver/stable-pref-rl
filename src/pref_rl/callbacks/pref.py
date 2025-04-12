@@ -43,6 +43,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.steps_since_train = 0
         self.has_trained = False
         self.num_feed = 0
+        self.keep_training = None
 
         self.device = torch.device(
             device or
@@ -103,9 +104,10 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         should_train = self.steps_since_train > self.n_steps_reward
         feedback_left = self.num_feed < self.max_feed
 
-        if (should_first_train or should_train) and feedback_left:
+        if (should_first_train or should_train) and (feedback_left or self.keep_training):
             sampling_method = 'uniform' if not self.has_trained else self.sampling_method
-            self._expand_data(sampling_method)
+            if feedback_left:
+                self._expand_data(sampling_method)
             self._train_predictor()
             self.steps_since_train = 0
 
