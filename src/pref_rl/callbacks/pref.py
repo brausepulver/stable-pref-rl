@@ -75,7 +75,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
-        start, end = self.num_feed, self.num_feed + len(preferences)
+        start, end = self.num_feed, self.num_feed + len(keep_indices)
         self.segment_buffer[start:end] = state_actions[keep_indices].detach().to(self.device)
         self.preference_buffer[start:end] = preferences.detach().to(self.device)
 

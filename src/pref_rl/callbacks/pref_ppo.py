@@ -31,6 +31,7 @@ class PrefPPOCallback(BasePrefCallback):
         batch_size_reward: int = 128,
         reward_model_kwargs: dict = {},
         n_steps_eval_current: int = None,
+        train_members_sequential: bool = False,  # For consistency with B-Pref
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -41,6 +42,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.reward_model_kwargs = reward_model_kwargs
         self.lr_reward = learning_rate_reward
         self.n_steps_eval_current = n_steps_eval_current or self.n_steps_reward
+        self.train_members_sequential = train_members_sequential
 
 
     def _init_callback(self):
@@ -48,16 +50,19 @@ class PrefPPOCallback(BasePrefCallback):
 
         obs_size, act_size = self._get_input_sizes()
         self.reward_model = RewardModel(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
-        self.member_optimizers = [
-            torch.optim.Adam(member.parameters(), lr=self.lr_reward)
-            for member in self.reward_model.members
-        ]
-
-        self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
 
         self.is_equal_teacher = self.train_teacher.eps_equal > 0
-        soft_ce_loss = lambda log_probs, targets: -(targets * log_probs).sum(dim=-1).mean()
-        self.disc_loss = soft_ce_loss if self.is_equal_teacher else nn.CrossEntropyLoss()
+        self.bce_loss = nn.BCEWithLogitsLoss()
+
+        if self.train_members_sequential:
+            self.rew_optimizer = [
+                torch.optim.Adam(member.parameters(), lr=self.lr_reward)
+                for member in self.reward_model.members
+            ]
+        else:
+            self.rew_optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=self.lr_reward)
+
+        self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
 
 
     def _get_predictor(self):
@@ -70,24 +75,21 @@ class PrefPPOCallback(BasePrefCallback):
         return correct.mean().item()
 
 
-    def _compute_loss_for_member(self, member: nn.Module, segments: torch.Tensor, preferences: torch.Tensor):
-        segments = segments.to(self.device)
-        preferences = preferences.to(self.device)
+    def _compute_loss_for_module(self, module: nn.Module, segments: torch.Tensor, preferences: torch.Tensor, module_is_ensemble: bool = False):
+        pred_rewards = module(segments)
 
-        pred_rewards = member(segments)
-        pred_returns = einops.reduce(pred_rewards, 'b n s 1 -> b n', 'sum')
+        pred_returns = einops.reduce(pred_rewards, '... batch pair segment 1 -> ... batch pair', 'sum')
+        if module_is_ensemble:
+            pred_returns = pred_returns.mean(dim=0)
 
-        if self.is_equal_teacher:
-            probabilities = torch.log_softmax(pred_returns, dim=-1)[..., 1]
-            loss = self.disc_loss(probabilities, preferences)
-        else:
-            loss = self.disc_loss(pred_returns, preferences.to(dtype=torch.long))
+        inputs = pred_returns[..., 1] - pred_returns[..., 0]
+        loss = self.bce_loss(inputs, preferences)
 
         accuracy = self._calculate_accuracy(pred_returns, preferences)
         return loss, accuracy
 
 
-    def _train_member_epoch(self, member: nn.Module, optim: torch.optim.Optimizer):
+    def _train_module_epoch(self, module: nn.Module, optim: torch.optim.Optimizer, module_is_ensemble: bool = False):
         dataset = TensorDataset(self.segment_buffer[:self.num_feed], self.preference_buffer[:self.num_feed])
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
         losses = []
@@ -95,7 +97,10 @@ class PrefPPOCallback(BasePrefCallback):
 
         for segments, preferences in dataloader:
             optim.zero_grad()
-            loss, accuracy = self._compute_loss_for_member(member, segments, preferences)
+            segments = segments.to(self.device)
+            preferences = preferences.to(self.device)
+
+            loss, accuracy = self._compute_loss_for_module(module, segments, preferences, module_is_ensemble)
             loss.backward()
             optim.step()
 
@@ -106,11 +111,14 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _train_reward_model_epoch(self):
-        losses, accuracies = zip(*[
-            self._train_member_epoch(member, self.member_optimizers[idx])
-            for idx, member in enumerate(self.reward_model.members)
-        ])
-        return np.mean(losses), np.mean(accuracies)
+        if self.train_members_sequential:
+            losses, accuracies = zip(*[
+                self._train_module_epoch(member, self.rew_optimizer[idx])
+                for idx, member in enumerate(self.reward_model.members)
+            ])
+            return np.mean(losses), np.mean(accuracies)
+
+        return self._train_module_epoch(self.reward_model, self.rew_optimizer, module_is_ensemble=True)
 
 
     def _train_predictor(self):
@@ -144,7 +152,7 @@ class PrefPPOCallback(BasePrefCallback):
         dataset = TensorDataset(segments[keep_indices], preferences)
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
 
-        batch_statistics = [self._compute_loss_for_member(member, *batch) for batch in dataloader for member in self.reward_model.members]
+        batch_statistics = [self._compute_loss_for_module(member, *batch) for batch in dataloader for member in self.reward_model.members]
         batch_losses, batch_accuracies = zip(*batch_statistics)
 
         return torch.tensor(batch_losses).mean().item(), torch.tensor(batch_accuracies).mean().item()
