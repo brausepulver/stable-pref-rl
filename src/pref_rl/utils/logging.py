@@ -19,14 +19,14 @@ class LogRolloutStatsCallback(BaseCallback):
             return
 
         ep_infos = list(itertools.islice(reversed(self.model.ep_info_buffer), self.window_size))
-        for ep_info_key, log_key in self.ep_info_log_keys.items():
-            self._log_data_for_key(ep_infos, ep_info_key, log_key)
+        for ep_info_key, (log_prefix, log_key) in self.ep_info_log_keys.items():
+            self._log_data_for_key(ep_infos, ep_info_key, log_prefix, log_key)
 
 
-    def _log_data_for_key(self, ep_infos: list, ep_info_key: str, log_key: str):
+    def _log_data_for_key(self, ep_infos: list, ep_info_key: str, log_prefix: str, log_key: str):
         items = [ep_info[ep_info_key] for ep_info in ep_infos if ep_info_key in ep_info]
         if len(items) > 0:
-            self.logger.record(f"rollout/{log_key}_{self.window_size}", safe_mean(items))
+            self.logger.record(f"{log_prefix}/{log_key}_{self.window_size}", safe_mean(items))
 
 
     def _on_step(self):
