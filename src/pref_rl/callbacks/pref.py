@@ -60,8 +60,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
-        self.segment_buffer = torch.empty((0, 2, self.segment_size, segment_dim), device=self.device).detach()
-        self.preference_buffer = torch.empty((0,), device=self.device).detach()
+        self.segment_buffer = torch.empty((self.max_feed, 2, self.segment_size, segment_dim), device=self.device).detach()
+        self.preference_buffer = torch.empty((self.max_feed,), device=self.device).detach()
 
 
     @abstractmethod
@@ -75,8 +75,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
-        self.segment_buffer = torch.cat([self.segment_buffer, state_actions[keep_indices].detach().to(self.device)]).detach()
-        self.preference_buffer = torch.cat([self.preference_buffer, preferences.detach().to(self.device)]).detach()
+        start, end = self.num_feed, self.num_feed + len(preferences)
+        self.segment_buffer[start:end] = state_actions[keep_indices].detach().to(self.device)
+        self.preference_buffer[start:end] = preferences.detach().to(self.device)
 
         self.num_feed += len(keep_indices)
         self.logger.record('pref/num_feed', self.num_feed)

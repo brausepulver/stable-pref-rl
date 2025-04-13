@@ -48,7 +48,10 @@ class PrefPPOCallback(BasePrefCallback):
 
         obs_size, act_size = self._get_input_sizes()
         self.reward_model = RewardModel(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
-        self.rew_optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=self.lr_reward)
+        self.member_optimizers = [
+            torch.optim.Adam(member.parameters(), lr=self.lr_reward)
+            for member in self.reward_model.members
+        ]
 
         self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
 
@@ -84,17 +87,17 @@ class PrefPPOCallback(BasePrefCallback):
         return loss, accuracy
 
 
-    def _train_member_epoch(self, member: nn.Module):
-        dataset = TensorDataset(self.segment_buffer, self.preference_buffer)
+    def _train_member_epoch(self, member: nn.Module, optim: torch.optim.Optimizer):
+        dataset = TensorDataset(self.segment_buffer[:self.num_feed], self.preference_buffer[:self.num_feed])
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
         losses = []
         accuracies = []
 
         for segments, preferences in dataloader:
-            self.rew_optimizer.zero_grad()
+            optim.zero_grad()
             loss, accuracy = self._compute_loss_for_member(member, segments, preferences)
             loss.backward()
-            self.rew_optimizer.step()
+            optim.step()
 
             losses.append(loss.item())
             accuracies.append(accuracy)
@@ -103,7 +106,10 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _train_reward_model_epoch(self):
-        losses, accuracies = zip(*[self._train_member_epoch(member) for member in self.reward_model.members])
+        losses, accuracies = zip(*[
+            self._train_member_epoch(member, self.member_optimizers[idx])
+            for idx, member in enumerate(self.reward_model.members)
+        ])
         return np.mean(losses), np.mean(accuracies)
 
 

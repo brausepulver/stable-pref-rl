@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 import hydra
 from importlib.util import find_spec
 from omegaconf import DictConfig, OmegaConf
@@ -7,7 +9,11 @@ from stable_baselines3.common.callbacks import EvalCallback, CallbackList
 from stable_baselines3.common.vec_env import VecNormalize
 import uuid
 from .envs import make_vec_env as make_env
+import torch
 
+
+if num_threads := os.getenv('TORCH_NUM_THREADS'):
+    torch.set_num_threads(int(num_threads))
 
 CONFIG_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../configs")
