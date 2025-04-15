@@ -31,7 +31,7 @@ class PrefPPOCallback(BasePrefCallback):
         batch_size_reward: int = 128,
         reward_model_kwargs: dict = {},
         n_steps_eval_current: int = None,
-        train_members_sequential: bool = False,  # For consistency with B-Pref
+        train_members_sequential: bool = True,  # For consistency with B-Pref
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -76,6 +76,8 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _compute_loss_for_module(self, module: nn.Module, segments: torch.Tensor, preferences: torch.Tensor, module_is_ensemble: bool = False):
+        segments = segments.to(self.device)
+        preferences = preferences.to(self.device)
         pred_rewards = module(segments)
 
         pred_returns = einops.reduce(pred_rewards, '... batch pair segment 1 -> ... batch pair', 'sum')
@@ -91,14 +93,12 @@ class PrefPPOCallback(BasePrefCallback):
 
     def _train_module_epoch(self, module: nn.Module, optim: torch.optim.Optimizer, module_is_ensemble: bool = False):
         dataset = TensorDataset(self.segment_buffer[:self.num_feed], self.preference_buffer[:self.num_feed])
-        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         losses = []
         accuracies = []
 
         for segments, preferences in dataloader:
             optim.zero_grad()
-            segments = segments.to(self.device)
-            preferences = preferences.to(self.device)
 
             loss, accuracy = self._compute_loss_for_module(module, segments, preferences, module_is_ensemble)
             loss.backward()
@@ -143,34 +143,58 @@ class PrefPPOCallback(BasePrefCallback):
             self._validate_total()
 
 
-    def _validate_on_episodes(self, episodes, size: int):
+    def _calculate_corr_coef(self, pred_rewards: torch.Tensor, gt_rewards: torch.Tensor):
+        gt_returns = einops.reduce(gt_rewards, 'pair batch segment -> (pair batch)', 'sum')
+        pred_returns = einops.reduce(pred_rewards, 'pair batch segment -> (pair batch)', 'sum')
+        stacked = torch.stack([gt_returns, pred_returns])
+        corr_matrix = torch.corrcoef(stacked)
+        return corr_matrix[0, 1]
+
+
+    def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = True):
         self.reward_model.eval()
 
         segments, rewards = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
 
         dataset = TensorDataset(segments[keep_indices], preferences)
-        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
-
+        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, pin_memory=self.device.type == 'cuda')
         batch_statistics = [self._compute_loss_for_module(member, *batch) for batch in dataloader for member in self.reward_model.members]
         batch_losses, batch_accuracies = zip(*batch_statistics)
 
-        return torch.tensor(batch_losses).mean().item(), torch.tensor(batch_accuracies).mean().item()
+        batch_corrs = []
+        if compute_correlation:
+            rewards = einops.rearrange(rewards, 'pair batch segment -> batch pair segment')
+            dataset = TensorDataset(segments[keep_indices], rewards[keep_indices])
+            dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, pin_memory=self.device.type == 'cuda')
+
+            for segments, rewards in dataloader:
+                pred_rewards = self.reward_model(segments.to(self.device)).mean(dim=0).squeeze(-1)
+                corr_coef = self._calculate_corr_coef(pred_rewards, rewards.to(self.device))
+                batch_corrs.append(corr_coef)
+
+        return (
+            torch.tensor(batch_losses).mean().item(),
+            torch.tensor(batch_accuracies).mean().item(),
+            torch.tensor(batch_corrs).mean().item() if compute_correlation else None,
+        )
 
 
     def _validate_total(self):
-        loss_total, accuracy_total = self._validate_on_episodes(self.buffer.episodes, len(self.segment_buffer))
+        loss_total, accuracy_total, corr_coef = self._validate_on_episodes(self.buffer.episodes, len(self.segment_buffer))
         self.logger.record('reward_model/eval/loss', loss_total)
         self.logger.record('reward_model/eval/accuracy', accuracy_total)
+        self.logger.record('reward_model/eval/corr_coef', corr_coef)
 
 
     def _validate_current(self):
         total_lens = itertools.accumulate(len(ep) for ep in reversed(self.buffer.episodes))
         recent_eps = [ep for ep, total in zip(reversed(self.buffer.episodes), total_lens) if total <= self.n_steps_reward]
 
-        loss_current, accuracy_current = self._validate_on_episodes(recent_eps, int(0.2 * sum(len(ep) for ep in recent_eps) / self.segment_size))
+        loss_current, accuracy_current, corr_coef = self._validate_on_episodes(recent_eps, int(0.5 * sum(len(ep) for ep in recent_eps) / self.segment_size))
         self.logger.record('reward_model/eval/loss_current', loss_current)
         self.logger.record('reward_model/eval/accuracy_current', accuracy_current)
+        self.logger.record('reward_model/eval/corr_coef_current', corr_coef)
 
 
     def _predict_rewards(self):

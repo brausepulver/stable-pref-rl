@@ -14,9 +14,10 @@ method:
     n_epochs_reward: 100
     train_acc_threshold_reward: 0.97
     learning_rate_reward: 3.e-4
-    batch_size_reward: 32
+    batch_size_reward: 128
     reward_model_kwargs:
       net_arch: [256, 256, 256]
+      ensemble_size: 3
       activation_fn:
         _target_: torch.nn.LeakyReLU
       output_fn:
