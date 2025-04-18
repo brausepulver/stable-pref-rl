@@ -59,8 +59,20 @@ class RewardModifierCallback(BaseCallback):
             if ep_info is None:
                 continue
 
-            ep_return = sum(self.pred_reward_buffer[env_idx])
-            ep_info[self.ep_info_key] = ep_return
+            ep_pred_return = sum(self.pred_reward_buffer[env_idx])
+            ep_info[self.ep_info_key] = ep_pred_return
+
+            ep_pred_rew = np.mean(self.pred_reward_buffer[env_idx])
+            ep_info[f"{self.ep_info_key}_step"] = ep_pred_rew
+
+            if len(self.pred_reward_buffer[env_idx]) > 1:
+                ep_pred_std = np.std(self.pred_reward_buffer[env_idx])
+            else:
+                ep_pred_std = 0.0
+            ep_info[f"{self.ep_info_key}_std"] = ep_pred_std
+
+            ep_info[f"{self.ep_info_key}_coef_var"] = ep_pred_std / ep_pred_rew
+                
             self.pred_reward_buffer[env_idx] = []
 
 
@@ -69,10 +81,3 @@ class RewardModifierCallback(BaseCallback):
         self._store_rewards(pred_rewards)
         self._save_returns(self.locals['infos'])
         return True
-
-
-    def _on_rollout_end(self):
-        ep_pred_rew = [ep_info[self.ep_info_key] for ep_info in self.model.ep_info_buffer if self.ep_info_key in ep_info]
-
-        if ep_pred_rew:
-            self.logger.record(f"{self.log_prefix}{self.log_suffix}", np.mean(ep_pred_rew))
