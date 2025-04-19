@@ -64,6 +64,8 @@ class PrefPPOCallback(BasePrefCallback):
 
         self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
 
+        self.ensemble_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
+
 
     def _get_predictor(self):
         return self.reward_model
@@ -204,7 +206,35 @@ class PrefPPOCallback(BasePrefCallback):
         state_actions = torch.cat([obs, act], dim=-1).to(self.device)
 
         with torch.no_grad():
-            return self.reward_model(state_actions).mean(dim=0).detach()
+            ensemble_rewards = self.reward_model(state_actions)
+            for env_idx in range(len(ensemble_rewards[0])):
+                self.ensemble_reward_buffer[env_idx].append(
+                    ensemble_rewards[:, env_idx, 0].cpu().numpy()
+                )
+            return ensemble_rewards.mean(dim=0)
+
+
+    def _save_returns(self, infos: list):
+        super()._save_returns(infos)
+
+        for env_idx, info in enumerate(infos):
+            ep_info = info.get('episode')
+            if ep_info is None:
+                continue
+
+            if self.ensemble_reward_buffer[env_idx]:
+                ensemble_preds = np.array(self.ensemble_reward_buffer[env_idx])
+                uncertainty = np.mean(np.std(ensemble_preds, axis=1))
+                ep_info['pred_r_uncertainty'] = uncertainty
+                
+                means = np.mean(ensemble_preds, axis=1)
+                ep_info['pred_r_mean'] = np.mean(means)
+
+                abs_means = np.abs(means) + 1e-8
+                coef_vars = np.std(ensemble_preds, axis=1) / abs_means
+                ep_info['pred_r_uncertainty_coef_var'] = np.mean(coef_vars)
+                
+                self.ensemble_reward_buffer[env_idx] = []
 
 
     def _on_step(self):
