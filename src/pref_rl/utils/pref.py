@@ -7,18 +7,23 @@ import torch.nn.functional as F
 
 class EpisodeBuffer:
     def __init__(self, n_envs, n_episodes):
-        self._env_buffer = [[] for _ in range(n_envs)]
-        self.episodes = deque(maxlen=n_episodes)
+        self._running_eps = [[] for _ in range(n_envs)]
+        self.done_eps = deque(maxlen=n_episodes)
 
 
     def add(self, value: torch.Tensor, done: np.ndarray):
         for env_idx, env_value in enumerate(value):
-            self._env_buffer[env_idx].append(env_value)
+            self._running_eps[env_idx].append(env_value)
 
         for env_idx in np.argwhere(done).reshape(-1):
-            episode = self._env_buffer[env_idx]
-            self.episodes.append(torch.stack(episode))
+            episode = self._running_eps[env_idx]
+            self.done_eps.append(torch.stack(episode))
             episode.clear()
+
+
+    def get_episodes(self):
+        running_ep_tensors = [torch.stack(ep) for ep in self._running_eps if len(ep) > 0]
+        return list(self.done_eps) + running_ep_tensors
 
 
 class Teacher:
@@ -86,6 +91,8 @@ class Sampler:
         assert method in ('uniform', 'disagreement', 'entropy'), f"Unknown sampling method: {method}"
 
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
+        if len(valid_episodes) == 0:
+            raise ValueError('No valid episodes to sample from')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
         ep_indices = torch.randint(0, len(valid_episodes), (2 * num_samples_expanded,))

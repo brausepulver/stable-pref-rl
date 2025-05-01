@@ -183,17 +183,18 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_total(self):
-        loss_total, accuracy_total, corr_coef = self._validate_on_episodes(self.buffer.episodes, len(self.segment_buffer))
+        loss_total, accuracy_total, corr_coef = self._validate_on_episodes(self.buffer.get_episodes(), len(self.segment_buffer))
         self.logger.record('reward_model/eval/loss', loss_total)
         self.logger.record('reward_model/eval/accuracy', accuracy_total)
         self.logger.record('reward_model/eval/corr_coef', corr_coef)
 
 
     def _validate_current(self):
-        total_lens = itertools.accumulate(len(ep) for ep in reversed(self.buffer.episodes))
-        recent_eps = [ep for ep, total in zip(reversed(self.buffer.episodes), total_lens) if total <= self.n_steps_reward]
+        episodes = self.buffer.get_episodes()
+        total_lens = itertools.accumulate(len(ep) for ep in reversed(episodes))
+        eps_since_train = [ep for ep, total in zip(reversed(episodes), total_lens) if total <= self.n_steps_reward]
 
-        loss_current, accuracy_current, corr_coef = self._validate_on_episodes(recent_eps, int(0.5 * sum(len(ep) for ep in recent_eps) / self.segment_size))
+        loss_current, accuracy_current, corr_coef = self._validate_on_episodes(eps_since_train, int(0.5 * sum(len(ep) for ep in eps_since_train) / self.segment_size))
         self.logger.record('reward_model/eval/loss_current', loss_current)
         self.logger.record('reward_model/eval/accuracy_current', accuracy_current)
         self.logger.record('reward_model/eval/corr_coef_current', corr_coef)

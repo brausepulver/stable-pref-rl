@@ -71,7 +71,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
     def _expand_data(self, sampling_method: str):
         num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
-        state_actions, rewards = self.sampler.sample_segments(self.buffer.episodes, num_samples, sampling_method, self._get_predictor())
+        state_actions, rewards = self.sampler.sample_segments(self.buffer.get_episodes(), num_samples, sampling_method, self._get_predictor())
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
@@ -94,11 +94,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.buffer.add(annotations, self.locals['dones'])
 
         if self.locals['dones'].any():
-            recent_eps = list(itertools.islice(reversed(self.buffer.episodes), self.margins_stats_window_size))
+            recent_eps = list(itertools.islice(reversed(self.buffer.get_episodes()), self.margins_stats_window_size))
             self.train_teacher.update_thresholds(recent_eps)
 
-        buffer_empty = len(self.buffer.episodes) == 0
-        if self.n_steps_first_train is None and not buffer_empty:
+        buffer_has_done = len(self.buffer.done_eps) > 0
+        if self.n_steps_first_train is None and buffer_has_done:
             self.n_steps_first_train = self.num_timesteps
 
         should_first_train = not self.has_trained and self.n_steps_first_train is not None and self.steps_since_train > self.n_steps_first_train

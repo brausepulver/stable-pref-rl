@@ -56,7 +56,7 @@ class PrefDIRECTCallback(BasePrefCallback):
 
     def _expand_data(self, sampling_method: str):
         num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
-        state_actions, rewards = self.sampler.sample_segments(self.buffer.episodes, num_samples, sampling_method, self._get_predictor())
+        state_actions, rewards = self.sampler.sample_segments(self.buffer.get_episodes(), num_samples, sampling_method, self._get_predictor())
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
@@ -83,7 +83,7 @@ class PrefDIRECTCallback(BasePrefCallback):
 
     def _get_negative_samples(self, size: int = None):
         obs_size, act_size = self._get_input_sizes()
-        recent_steps = torch.cat(list(self.buffer.episodes))[-size:].to(self.device)
+        recent_steps = torch.cat(list(self.buffer.get_episodes()))[-size:].to(self.device)
         steps, _ = torch.split(recent_steps, (obs_size + act_size, 1), dim=-1)
         return steps
 
