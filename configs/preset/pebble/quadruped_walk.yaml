@@ -5,9 +5,10 @@ defaults:
 
 method:
   _target_: pref_rl.methods.pebble.PEBBLE
+  learning_starts: 1000
 
   unsuper:
-    n_steps_unsuper: 9_000
+    n_steps_unsuper: 10_000
     n_epochs_unsuper: 100
 
   pref:

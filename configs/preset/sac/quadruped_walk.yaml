@@ -10,8 +10,9 @@ method:
   target_update_interval: 2
   tau: 0.005
   gamma: 0.99
+  learning_starts: 5000
 
-  device: mps
+  device: cpu
   policy_kwargs:
     net_arch: [1024, 1024]
     n_critics: 2

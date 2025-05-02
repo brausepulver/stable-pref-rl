@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
-for seed in $(seq 0 16 144); do
-    echo "Running with seed ${seed}"
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+    echo "Running PPO with seed ${seed}"
     train \
         preset=ppo/quadruped_walk \
-        training.total_timesteps=4000000 \
         training.seed=${seed} \
-        'logging.tags=[baseline, ppo]' \
-        logging.group=ppo_baseline &
+        training.total_timesteps=1000000 \
+        preset.method.clip_range.end=0.3 \
+        'logging.tags=[ppo, baseline]' \
+        logging.group=ppo/baseline &
 done
-
 wait
-echo "All runs have completed."

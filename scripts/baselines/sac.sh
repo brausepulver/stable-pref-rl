@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 
-for seed in $(seq 0 16 144); do
-    echo "Running with seed ${seed}"
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+    echo "Running SAC with seed ${seed}"
     train \
         preset=sac/quadruped_walk \
-        training.total_timesteps=4000000 \
+        training.total_timesteps=1000000 \
         training.seed=${seed} \
-        'logging.tags=[baseline, sac]' \
-        logging.group="sac_baseline" &
+        'logging.tags=[sac, baseline]' \
+        logging.group=sac/baseline &
 done
-
 wait
-echo "All runs have completed."
