@@ -18,3 +18,7 @@ method:
     #   eps_mistake: 0
     #   eps_equal: 0
     #   eps_skip: 0
+
+    validate_on_train: false
+    validate_on_held_out: true
+    held_out_data_path: data/validation_data.pkl

@@ -1,6 +1,8 @@
 import einops
+from hydra.utils import to_absolute_path
 import itertools
 import numpy as np
+from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -32,6 +34,9 @@ class PrefPPOCallback(BasePrefCallback):
         reward_model_kwargs: dict = {},
         n_steps_eval_current: int = None,
         train_members_sequential: bool = True,  # For consistency with B-Pref
+        validate_on_train: bool = False,
+        validate_on_held_out: bool = True,
+        held_out_data_path: str = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -43,6 +48,13 @@ class PrefPPOCallback(BasePrefCallback):
         self.lr_reward = learning_rate_reward
         self.n_steps_eval_current = n_steps_eval_current or self.n_steps_reward
         self.train_members_sequential = train_members_sequential
+        self.validate_on_train = validate_on_train
+        self.validate_on_held_out = validate_on_held_out
+
+        self.held_out_data_path = (
+            Path(to_absolute_path(held_out_data_path))
+            if held_out_data_path else None
+        )
 
 
     def _init_callback(self):
@@ -142,7 +154,10 @@ class PrefPPOCallback(BasePrefCallback):
         self.logger.record('reward_model/train/epochs', epoch + 1)
 
         with torch.no_grad():
-            self._validate_total()
+            if self.validate_on_train:
+                self._validate_train()
+            if self.validate_on_held_out:
+                self._validate_held_out()
 
 
     def _calculate_corr_coef(self, pred_rewards: torch.Tensor, gt_rewards: torch.Tensor):
@@ -153,13 +168,10 @@ class PrefPPOCallback(BasePrefCallback):
         return corr_matrix[0, 1]
 
 
-    def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = True):
+    def _validate_on_segments(self, segments: torch.Tensor, rewards: torch.Tensor, preferences: torch.Tensor, compute_correlation: bool = False):
         self.reward_model.eval()
 
-        segments, rewards = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model)
-        preferences, keep_indices = self.eval_teacher.query_segments(rewards)
-
-        dataset = TensorDataset(segments[keep_indices], preferences)
+        dataset = TensorDataset(segments, preferences)
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, pin_memory=self.device.type == 'cuda')
         batch_statistics = [self._compute_loss_for_module(member, *batch) for batch in dataloader for member in self.reward_model.members]
         batch_losses, batch_accuracies = zip(*batch_statistics)
@@ -167,7 +179,7 @@ class PrefPPOCallback(BasePrefCallback):
         batch_corrs = []
         if compute_correlation:
             rewards = einops.rearrange(rewards, 'pair batch segment -> batch pair segment')
-            dataset = TensorDataset(segments[keep_indices], rewards[keep_indices])
+            dataset = TensorDataset(segments, rewards)
             dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, pin_memory=self.device.type == 'cuda')
 
             for segments, rewards in dataloader:
@@ -182,11 +194,22 @@ class PrefPPOCallback(BasePrefCallback):
         )
 
 
-    def _validate_total(self):
-        loss_total, accuracy_total, corr_coef = self._validate_on_episodes(self.buffer.get_episodes(), len(self.segment_buffer))
-        self.logger.record('reward_model/eval/loss', loss_total)
-        self.logger.record('reward_model/eval/accuracy', accuracy_total)
-        self.logger.record('reward_model/eval/corr_coef', corr_coef)
+    def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = False):
+        segments, rewards = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model)
+        preferences, keep_indices = self.eval_teacher.query_segments(rewards)
+        return self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation)
+
+
+    def _log_validation_metrics(self, loss: float, accuracy: float, corr_coef: float | None, prefix: str = ''):
+        self.logger.record(f"reward_model/eval/{prefix}loss", loss)
+        self.logger.record(f"reward_model/eval/{prefix}accuracy", accuracy)
+        if corr_coef:
+            self.logger.record(f"reward_model/eval/{prefix}corr_coef", corr_coef)
+
+
+    def _validate_train(self):
+        loss, accuracy, corr_coef = self._validate_on_episodes(self.buffer.get_episodes(), len(self.segment_buffer))
+        self._log_validation_metrics(loss, accuracy, corr_coef)
 
 
     def _validate_current(self):
@@ -194,10 +217,22 @@ class PrefPPOCallback(BasePrefCallback):
         total_lens = itertools.accumulate(len(ep) for ep in reversed(episodes))
         eps_since_train = [ep for ep, total in zip(reversed(episodes), total_lens) if total <= self.n_steps_reward]
 
-        loss_current, accuracy_current, corr_coef = self._validate_on_episodes(eps_since_train, int(0.5 * sum(len(ep) for ep in eps_since_train) / self.segment_size))
-        self.logger.record('reward_model/eval/loss_current', loss_current)
-        self.logger.record('reward_model/eval/accuracy_current', accuracy_current)
-        self.logger.record('reward_model/eval/corr_coef_current', corr_coef)
+        loss, accuracy, corr_coef = self._validate_on_episodes(eps_since_train, int(0.5 * sum(len(ep) for ep in eps_since_train) / self.segment_size))
+        self._log_validation_metrics(loss, accuracy, corr_coef, prefix='current/')
+
+
+    def _validate_held_out(self):
+        path = self.held_out_data_path
+        if not path or not path.is_file():
+            raise ValueError("""
+                To validate on held-out data, please specify a path to the file containing the held-out data, relative to the current working directory.
+                See notebooks/create_rm_validation_data.ipynb for the kind of file to point to.
+            """)
+        segments, rewards = torch.load(path)
+        preferences, keep_indices = self.eval_teacher.query_segments(rewards)
+
+        loss, accuracy, corr_coef = self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences)
+        self._log_validation_metrics(loss, accuracy, corr_coef, prefix='held_out/')
 
 
     def _predict_rewards(self):

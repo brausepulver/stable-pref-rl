@@ -23,7 +23,7 @@ wandb = [
 ]
 b-pref = [
     "shimmy[dm-control]>=2.0.0",
-    "metaworld @ git+https://github.com/Farama-Foundation/Metaworld.git@master",
+    "metaworld @ git+https://github.com/Farama-Foundation/Metaworld.git@304d79d",
 ]
 direct = [
     "bpy>=3.6.0",
