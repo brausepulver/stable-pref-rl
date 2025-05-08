@@ -60,23 +60,23 @@ class PrefPPOCallback(BasePrefCallback):
     def _init_callback(self):
         super()._init_callback()
 
+        self.ensemble_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
+
         obs_size, act_size = self._get_input_sizes()
         self.reward_model = RewardModel(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
-
-        self.is_equal_teacher = self.train_teacher.eps_equal > 0
         self.bce_loss = nn.BCEWithLogitsLoss()
 
         if self.train_members_sequential:
-            self.rew_optimizer = [
-                torch.optim.Adam(member.parameters(), lr=self.lr_reward)
-                for member in self.reward_model.members
-            ]
+            optim_params = [member.parameters() for member in self.reward_model.members]
         else:
-            self.rew_optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=self.lr_reward)
+            optim_params = [self.reward_model.parameters()]
+
+        self.rew_optimizer = torch.optim.Adam(
+            [{'params': params} for params in optim_params],
+            lr=self.lr_reward
+        )
 
         self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
-
-        self.ensemble_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
 
 
     def _get_predictor(self):
@@ -105,18 +105,18 @@ class PrefPPOCallback(BasePrefCallback):
         return loss, accuracy
 
 
-    def _train_module_epoch(self, module: nn.Module, optim: torch.optim.Optimizer, module_is_ensemble: bool = False):
+    def _train_module_epoch(self, module: nn.Module, module_is_ensemble: bool = False):
         dataset = TensorDataset(self.segment_buffer[:self.num_feed], self.preference_buffer[:self.num_feed])
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         losses = []
         accuracies = []
 
         for segments, preferences in dataloader:
-            optim.zero_grad()
+            self.rew_optimizer.zero_grad()
 
             loss, accuracy = self._compute_loss_for_module(module, segments, preferences, module_is_ensemble)
             loss.backward()
-            optim.step()
+            self.rew_optimizer.step()
 
             losses.append(loss.item())
             accuracies.append(accuracy)
@@ -126,10 +126,7 @@ class PrefPPOCallback(BasePrefCallback):
 
     def _train_reward_model_epoch(self):
         if self.train_members_sequential:
-            losses, accuracies = zip(*[
-                self._train_module_epoch(member, self.rew_optimizer[idx])
-                for idx, member in enumerate(self.reward_model.members)
-            ])
+            losses, accuracies = zip(*[self._train_module_epoch(member) for member in self.reward_model.members])
             return np.mean(losses), np.mean(accuracies)
 
         return self._train_module_epoch(self.reward_model, self.rew_optimizer, module_is_ensemble=True)

@@ -5,7 +5,7 @@ from importlib.util import find_spec
 from omegaconf import DictConfig, OmegaConf
 import os
 from stable_baselines3.common.base_class import BaseAlgorithm
-from stable_baselines3.common.callbacks import EvalCallback, CallbackList
+from stable_baselines3.common.callbacks import CallbackList, EvalCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import VecNormalize
 import uuid
 from .envs import make_vec_env as make_env
@@ -60,12 +60,16 @@ def main(cfg: DictConfig) -> None:
     callbacks = [
         EvalCallback(
             eval_env,
-            best_model_save_path="./best_model",
+            best_model_save_path="./best_model" if cfg.logging.save_best_eval_models else None,
             log_path="./logs",
             eval_freq=cfg.logging.eval_freq,
             deterministic=True,
             render=False
-        )
+        ),
+        *([CheckpointCallback(
+            save_freq=cfg.logging.checkpoint_freq,
+            save_path="./checkpoints",
+        )] if cfg.logging.save_checkpoints else []),
     ]
     if has_wandb:
         from wandb.integration.sb3 import WandbCallback

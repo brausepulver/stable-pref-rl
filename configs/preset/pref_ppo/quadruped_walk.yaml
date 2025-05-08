@@ -5,6 +5,7 @@ defaults:
 
 method:
   _target_: pref_rl.methods.pref_ppo.PrefPPO
+  save_final_pref_buffer: true
 
   unsuper:
     n_steps_unsuper: 32_000
