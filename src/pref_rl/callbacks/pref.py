@@ -3,6 +3,7 @@ import itertools
 import torch
 from .reward_mod import RewardModifierCallback
 from ..utils.pref import EpisodeBuffer, Teacher, Sampler
+from ..config import ConstantSchedule
 
 
 class BasePrefCallback(RewardModifierCallback, ABC):
@@ -13,7 +14,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         sampler: str = 'uniform',
         segment_size: int = 50,
         max_feed: int = 2_000,
-        feed_batch_size: int = 200,
+        feed_batch_size: int | None = 200,
+        feed_schedule: callable = None,
         teacher: str = None,
         teacher_kwargs: dict = {},
         log_prefix='pref/',
@@ -30,13 +32,16 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.sampling_method = sampler
         self.segment_size = segment_size
         self.max_feed = max_feed
-        self.feed_batch_size = feed_batch_size
         self.train_teacher = teacher
         self.teacher_kwargs = teacher_kwargs
         self.n_steps_first_train = n_steps_first_train
         self.on_first_trained = on_first_trained
         self.margins_stats_window_size = margins_stats_window_size
         self.on_trained = on_trained
+
+        if not feed_schedule and not feed_batch_size:
+            raise ValueError('Either feed_batch_size or feed_schedule must be set')
+        self.feed_schedule = feed_schedule or ConstantSchedule(feed_batch_size)
 
         assert self.ann_buffer_size_eps is None or self.margins_stats_window_size <= self.ann_buffer_size_eps
 
@@ -63,6 +68,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.segment_buffer = torch.empty((self.max_feed, 2, self.segment_size, segment_dim), device=self.device).detach()
         self.preference_buffer = torch.empty((self.max_feed,), device=self.device).detach()
 
+        self.total_timesteps = self.model._total_timesteps
+
 
     @abstractmethod
     def _get_predictor(self):
@@ -70,7 +77,14 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _expand_data(self, sampling_method: str):
-        num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
+        progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
+        feed_batch_size = int(self.feed_schedule(
+            progress_remaining,
+            num_timesteps=self.num_timesteps,
+            total_timesteps=self.total_timesteps
+        ))
+
+        num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
         state_actions, rewards = self.sampler.sample_segments(self.buffer.get_episodes(), num_samples, sampling_method, self._get_predictor())
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
