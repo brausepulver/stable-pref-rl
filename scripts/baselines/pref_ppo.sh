@@ -48,6 +48,7 @@ for i in $(seq 1 8); do
         training.seed=$seed \
         preset.method.pref.sampler=entropy \
         'logging.tags=[pref_ppo, baseline, entropy]' \
+        "preset.method.save_final_pref_buffer=true" \
         "logging.group=pref_ppo/baseline/entropy" &
 done
 wait

@@ -8,10 +8,10 @@ from ..utils.callbacks import get_default_callbacks
 
 
 class PrefPPO(PPO):
-    def __init__(self, *args, save_final_pref_buffer=False, unsuper={}, pref={}, **kwargs):
+    def __init__(self, *args, save_final_ep_buffer=False, unsuper={}, pref={}, **kwargs):
         super().__init__(*args, _init_setup_model=False, **kwargs)
 
-        self.save_final_pref_buffer = save_final_pref_buffer
+        self.save_final_ep_buffer = save_final_ep_buffer
         self.unsuper_kwargs = unsuper
         self.pref_kwargs = pref
         self.unsuper_enabled = self.unsuper_kwargs['n_steps_unsuper'] is not None
@@ -75,7 +75,7 @@ class PrefPPO(PPO):
 
 
     def save(self, path, exclude = None, include = None):
-        if self.save_final_pref_buffer:
+        if self.save_final_ep_buffer:
             with open('done_eps.pkl', 'wb') as f:
                 pickle.dump(self.pref_ppo_callback.buffer.done_eps, f)
 
