@@ -37,6 +37,7 @@ class PrefPPOCallback(BasePrefCallback):
         validate_on_train: bool = False,
         validate_on_held_out: bool = True,
         held_out_data_path: str = None,
+        ensemble_agg_fn: callable = torch.mean,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -50,6 +51,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.train_members_sequential = train_members_sequential
         self.validate_on_train = validate_on_train
         self.validate_on_held_out = validate_on_held_out
+        self.ensemble_agg_fn = ensemble_agg_fn
 
         self.held_out_data_path = (
             Path(to_absolute_path(held_out_data_path))
@@ -244,7 +246,7 @@ class PrefPPOCallback(BasePrefCallback):
                 self.ensemble_reward_buffer[env_idx].append(
                     ensemble_rewards[:, env_idx, 0].cpu().numpy()
                 )
-            return ensemble_rewards.mean(dim=0)
+            return self.ensemble_agg_fn(ensemble_rewards)
 
 
     def _save_returns(self, infos: list):

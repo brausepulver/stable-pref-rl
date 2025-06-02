@@ -1,3 +1,5 @@
+import torch
+
 class ConstantSchedule:
     def __init__(self, value: float):
         self.value = value
@@ -33,3 +35,10 @@ class PiecewiseConstantSchedule:
         for steps, value in self.pieces:
             if num_timesteps >= steps:
                 return value
+
+
+class RandomAggregator:
+    def __call__(self, ensemble_rewards: torch.Tensor) -> list:
+        ensemble_size, batch_size = ensemble_rewards.shape[0], ensemble_rewards.shape[1]
+        random_indices = torch.randint(0, ensemble_size, (batch_size,))
+        return ensemble_rewards[random_indices, torch.arange(batch_size)]
