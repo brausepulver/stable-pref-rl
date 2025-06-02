@@ -19,10 +19,9 @@ for i in $(seq 0 7); do
     train \
         ${BASE_PARAMS[@]} \
         training.seed=$seed \
-        preset.method.pref.sampler.type=mixed \
-        preset.method.pref.sampler.entropy=0.5 \
-        preset.method.pref.sampler.disagreement=0.5 \
-        preset.method.pref.sampler.pre_sample_multiplier=10 \
+        +preset.method.pref.sampler.type=mixed \
+        +preset.method.pref.sampler.entropy=0.5 \
+        +preset.method.pref.sampler.disagreement=0.5 \
         'logging.tags=[pref_ppo, experiment, sampler]' \
         "logging.group=pref_ppo/exp/sampler_mixed" &
 done
