@@ -80,24 +80,22 @@ class Teacher:
 
 
 class Sampler:
-    def __init__(self, segment_size: int, observation_size: int, action_size: int, sampler_config: dict, pre_sample_multiplier: int = 10):
+    def __init__(self, segment_size: int, observation_size: int, action_size: int, pre_sample_multiplier: int = 10):
         self.segment_size = segment_size
         self.observation_size = observation_size
         self.action_size = action_size
         self.pre_sample_multiplier = pre_sample_multiplier
 
-        self.config = sampler_config
-        self.method = self.config.get('type', 'uniform')
 
-
-    def sample_segments(self, episodes: list, num_samples: int, reward_model: callable = None, stratified: bool = False):
-        assert self.method in ('uniform', 'disagreement', 'entropy', 'mixed'), f"Unknown sampling method: {self.method}"
+    def sample_segments(self, episodes: list, num_samples: int, sampler: str | dict, reward_model: callable = None, stratified: bool = False):
+        method = sampler if isinstance(sampler, str) else sampler.get('type', 'uniform')
+        assert method in ('uniform', 'disagreement', 'entropy', 'mixed'), f"Unknown sampling method: {self.method}"
 
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
         if len(valid_episodes) == 0:
             raise ValueError('No valid episodes to sample from')
 
-        num_samples_expanded = num_samples if self.method == 'uniform' else self.pre_sample_multiplier * num_samples
+        num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
 
         if stratified:
             episodes_count = len(valid_episodes)
@@ -128,7 +126,7 @@ class Sampler:
         split_state_actions = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
         split_rewards = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
 
-        if self.method == 'uniform':
+        if method == 'uniform':
             return split_state_actions, split_rewards
 
         with torch.no_grad():
@@ -142,11 +140,11 @@ class Sampler:
             entropy_values = -torch.sum(probabilities * torch.log(probabilities + 1e-9), dim=-1)
             entropy_metric = entropy_values.mean(dim=0)
 
-            if self.method == 'disagreement':
+            if method == 'disagreement':
                 metric = disagreement_metric
-            elif self.method == 'entropy':
+            elif method == 'entropy':
                 metric = entropy_metric
-            elif self.method == 'mixed':
+            elif method == 'mixed':
                 if disagreement_metric.max() > disagreement_metric.min():
                     norm_disagreement = (disagreement_metric - disagreement_metric.min()) / \
                                         (disagreement_metric.max() - disagreement_metric.min() + 1e-9)
@@ -159,8 +157,8 @@ class Sampler:
                 else:
                     norm_entropy = torch.zeros_like(entropy_metric)
 
-                entropy_weight = self.config.get('entropy', 0.0)
-                disagreement_weight = self.config.get('disagreement', 0.0)
+                entropy_weight = sampler.get('entropy', 0.0)
+                disagreement_weight = sampler.get('disagreement', 0.0)
                 assert abs(entropy_weight + disagreement_weight - 1.0) < 1e-9, \
                     "For 'mixed' sampler, entropy and disagreement weights must sum to 1.0"
 

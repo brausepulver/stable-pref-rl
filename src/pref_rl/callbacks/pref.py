@@ -11,7 +11,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         device: str = 'cpu',
         n_steps_reward: int = 32_000,
         ann_buffer_size_eps: int = None,
-        sampler: dict = None,
+        sampler: str | dict = 'uniform',
         segment_size: int = 50,
         max_feed: int = 2_000,
         feed_batch_size: int | None = 200,
@@ -29,7 +29,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         self.n_steps_reward = n_steps_reward
         self.ann_buffer_size_eps = ann_buffer_size_eps
-        self.sampler_config = sampler if sampler is not None else {'type': 'uniform'}
+        self.sampler_cfg = sampler
         self.segment_size = segment_size
         self.max_feed = max_feed
         self.train_teacher = teacher
@@ -65,8 +65,6 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             segment_size=self.segment_size,
             observation_size=obs_size,
             action_size=act_size,
-            sampler_config=self.sampler_config,
-            pre_sample_multiplier=self.sampler_config.get('pre_sample_multiplier', 10)
         )
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher, teacher_kwargs=self.teacher_kwargs)
 
@@ -94,6 +92,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         state_actions, rewards = self.sampler.sample_segments(
             self.buffer.get_episodes(),
             num_samples,
+            self.sampler_cfg,
             self._get_predictor()
         )
 
