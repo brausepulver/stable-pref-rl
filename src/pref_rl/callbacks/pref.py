@@ -11,7 +11,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         device: str = 'cpu',
         n_steps_reward: int = 32_000,
         ann_buffer_size_eps: int = None,
-        sampler: str = 'uniform',
+        sampler: dict = None,
         segment_size: int = 50,
         max_feed: int = 2_000,
         feed_batch_size: int | None = 200,
@@ -29,7 +29,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         self.n_steps_reward = n_steps_reward
         self.ann_buffer_size_eps = ann_buffer_size_eps
-        self.sampling_method = sampler
+        self.sampler_config = sampler if sampler is not None else {'type': 'uniform'}
         self.segment_size = segment_size
         self.max_feed = max_feed
         self.train_teacher = teacher
@@ -61,7 +61,13 @@ class BasePrefCallback(RewardModifierCallback, ABC):
     def _init_callback(self):
         obs_size, act_size = self._get_input_sizes()
         self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps)
-        self.sampler = Sampler(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size)
+        self.sampler = Sampler(
+            segment_size=self.segment_size,
+            observation_size=obs_size,
+            action_size=act_size,
+            sampler_config=self.sampler_config,
+            pre_sample_multiplier=self.sampler_config.get('pre_sample_multiplier', 10)
+        )
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
@@ -76,7 +82,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
-    def _expand_data(self, sampling_method: str):
+    def _expand_data(self):
         progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
         feed_batch_size = int(self.feed_schedule(
             progress_remaining,
@@ -85,7 +91,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         ))
 
         num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
-        state_actions, rewards = self.sampler.sample_segments(self.buffer.get_episodes(), num_samples, sampling_method, self._get_predictor())
+        state_actions, rewards = self.sampler.sample_segments(
+            self.buffer.get_episodes(),
+            num_samples,
+            self._get_predictor()
+        )
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
@@ -120,9 +130,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         feedback_left = self.num_feed < self.max_feed
 
         if (should_first_train or should_train) and (feedback_left or self.keep_training):
-            sampling_method = 'uniform' if not self.has_trained else self.sampling_method
             if feedback_left:
-                self._expand_data(sampling_method)
+                self._expand_data()
             self._train_predictor()
             self.steps_since_train = 0
 
