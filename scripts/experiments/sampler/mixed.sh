@@ -23,8 +23,8 @@ for i in $(seq 0 7); do
         preset.method.pref.sampler.entropy=0.5 \
         preset.method.pref.sampler.disagreement=0.5 \
         preset.method.pref.sampler.pre_sample_multiplier=10 \
-        'logging.tags=[pref_ppo, experiment, mixed_sampler_test, e05_d05]' \
-        "logging.group=pref_ppo/experiment/mixed_sampler_e05_d05" &
+        'logging.tags=[pref_ppo, experiment, sampler]' \
+        "logging.group=pref_ppo/exp/sampler_mixed" &
 done
 wait
 
