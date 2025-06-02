@@ -32,8 +32,10 @@ def setup_wandb(cfg: DictConfig):
         group=cfg.logging.group,
         tags=cfg.logging.tags,
         config=OmegaConf.to_container(cfg, resolve=True),
-        sync_tensorboard=True
+        sync_tensorboard=True,
     )
+    if os.getenv('WANDB_LOG_CODE') == 'true':
+        run.log_code(root='../../', include_fn=lambda path: path.startswith('src/') and path.endswith('.py'))
     return run
 
 
