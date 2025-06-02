@@ -40,24 +40,6 @@ for i in $(seq 1 8); do
 done
 wait
 
-echo "Running experiments with logarithmic schedules"
-
-for i in $(seq 1 8); do
-    seed=$((1000 * i))
-    
-    train \
-        ${BASE_PARAMS[@]} \
-        training.seed=$seed \
-        preset.method.pref.n_steps_reward=$DEFAULT_N_STEPS \
-        "+preset.method.pref.feed_schedule._target_=pref_rl.config.ExponentialSchedule" \
-        "+preset.method.pref.feed_schedule.start=250" \
-        "+preset.method.pref.feed_schedule.end=0" \
-        "+preset.method.pref.feed_schedule.decay=0.018" \
-        "logging.tags=[pref_ppo, experiment, entropy, schedules, log]" \
-        "logging.group=pref_ppo/schedules/log_250_0.018" &
-done
-wait
-
 echo "Running experiments with varying n_steps_reward"
 
 for i in $(seq 1 8); do
