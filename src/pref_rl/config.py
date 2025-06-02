@@ -42,3 +42,14 @@ class RandomAggregator:
         ensemble_size, batch_size = ensemble_rewards.shape[0], ensemble_rewards.shape[1]
         random_indices = torch.randint(0, ensemble_size, (batch_size,))
         return ensemble_rewards[random_indices, torch.arange(batch_size)]
+
+
+class OutlierAggregator:
+    def __call__(self, ensemble_rewards: torch.Tensor) -> torch.Tensor:
+        batch_size =  ensemble_rewards.shape[1]
+        rewards_expanded_i = ensemble_rewards.unsqueeze(0)
+        rewards_expanded_j = ensemble_rewards.unsqueeze(1)
+        pairwise_diffs = torch.abs(rewards_expanded_i - rewards_expanded_j)
+        total_distances = torch.sum(pairwise_diffs, dim=1).squeeze(-1)
+        outlier_indices = torch.argmax(total_distances, dim=0)
+        return ensemble_rewards[outlier_indices, torch.arange(batch_size)]
