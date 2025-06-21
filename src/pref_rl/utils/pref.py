@@ -112,7 +112,7 @@ class Sampler:
         for ep_idx in ep_indices:
             ep = valid_episodes[ep_idx]
 
-            start_step = np.random.randint(0, len(ep) - self.segment_size)
+            start_step = 0 if len(ep) == self.segment_size else np.random.randint(0, len(ep) - self.segment_size)
             offsets = torch.arange(0, self.segment_size)
             step_indices = start_step + offsets
 

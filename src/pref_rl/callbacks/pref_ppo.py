@@ -257,9 +257,7 @@ class PrefPPOCallback(BasePrefCallback):
 
             if self.ensemble_reward_buffer[env_idx]:
                 ensemble_preds = np.array(self.ensemble_reward_buffer[env_idx])
-                uncertainty = np.mean(np.std(ensemble_preds, axis=1))
-                ep_info['pred_r_uncertainty'] = uncertainty
-
+                ep_info['pred_r_uncertainty'] = np.mean(np.std(ensemble_preds, axis=1))
                 ep_info['pred_r_std_member'] = np.mean(np.std(ensemble_preds, axis=0))
 
                 means = np.mean(ensemble_preds, axis=1)

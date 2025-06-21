@@ -102,4 +102,116 @@ for i in $(seq 1 8); do
 done
 wait
 
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+
+    train \
+        ${BASE_PARAMS[@]} \
+        "training.total_timesteps=2000000" \
+        "preset.method.clip_range.end=0.2" \
+        training.seed=$seed \
+        preset.method.pref.n_steps_reward=64000 \
+        "logging.tags=[pref_ppo, experiment, entropy]" \
+        "logging.group=pref_ppo/schedules/n_steps_64000" &
+done
+wait
+
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+
+    train \
+        ${BASE_PARAMS[@]} \
+        "training.total_timesteps=2000000" \
+        "preset.method.clip_range.end=0.2" \
+        training.seed=$seed \
+        preset.method.pref.n_steps_reward=128000 \
+        "logging.tags=[pref_ppo, experiment, entropy]" \
+        "logging.group=pref_ppo/schedules/n_steps_128000" &
+done
+wait
+
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+
+    train \
+        ${BASE_PARAMS[@]} \
+        "training.total_timesteps=2000000" \
+        "preset.method.clip_range.end=0.2" \
+        training.seed=$seed \
+        preset.method.pref.n_steps_reward=192000 \
+        "logging.tags=[pref_ppo, experiment, entropy]" \
+        "logging.group=pref_ppo/schedules/n_steps_192000" &
+done
+wait
+
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+    train \
+        ${BASE_PARAMS[@]} \
+        training.seed=$seed \
+        "training.total_timesteps=2000000" \
+        "preset.method.clip_range.end=0.2" \
+        preset.method.pref.n_steps_reward=32000 \
+        preset.method.pref.feed_batch_size=65 \
+        "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
+        "logging.group=pref_ppo/schedules/n_steps_32000" &
+done
+wait
+
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+    train \
+        ${BASE_PARAMS[@]} \
+        training.seed=$seed \
+        "training.total_timesteps=2000000" \
+        "preset.method.clip_range.end=0.2" \
+        preset.method.pref.n_steps_reward=16000 \
+        preset.method.pref.feed_batch_size=32 \
+        "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
+        "logging.group=pref_ppo/schedules/n_steps_16000" &
+done
+wait
+
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+    train \
+        ${BASE_PARAMS[@]} \
+        training.seed=$seed \
+        "training.total_timesteps=2000000" \
+        "preset.method.clip_range.end=0.2" \
+        preset.method.pref.n_steps_reward=8000 \
+        preset.method.pref.feed_batch_size=16 \
+        "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
+        "logging.group=pref_ppo/schedules/n_steps_8000" &
+done
+wait
+
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+    train \
+        ${BASE_PARAMS[@]} \
+        training.seed=$seed \
+        "training.total_timesteps=2000000" \
+        "preset.method.clip_range.end=0.2" \
+        preset.method.pref.n_steps_reward=4000 \
+        preset.method.pref.feed_batch_size=8 \
+        "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
+        "logging.group=pref_ppo/schedules/n_steps_4000" &
+done
+wait
+
+for i in $(seq 1 8); do
+    seed=$((1000 * i))
+    train \
+        ${BASE_PARAMS[@]} \
+        training.seed=$seed \
+        "training.total_timesteps=2000000" \
+        "preset.method.clip_range.end=0.2" \
+        preset.method.pref.n_steps_reward=500 \
+        preset.method.pref.feed_batch_size=1 \
+        "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
+        "logging.group=pref_ppo/schedules/n_steps_500" &
+done
+wait
+
 echo "All experiments completed"
