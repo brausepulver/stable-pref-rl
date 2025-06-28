@@ -79,6 +79,10 @@ class Teacher:
         return preferences, keep_indices
 
 
+class NoValidEpisodesError(ValueError):
+    pass
+
+
 class Sampler:
     def __init__(self, segment_size: int, observation_size: int, action_size: int, pre_sample_multiplier: int = 10):
         self.segment_size = segment_size
@@ -92,7 +96,7 @@ class Sampler:
 
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
         if len(valid_episodes) == 0:
-            raise ValueError('No valid episodes to sample from')
+            raise NoValidEpisodesError('No valid episodes to sample from')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
 

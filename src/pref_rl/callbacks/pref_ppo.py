@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from .pref import BasePrefCallback
 from ..utils.model import build_layered_module
-from ..utils.pref import Teacher
+from ..utils.pref import NoValidEpisodesError, Teacher
 
 
 class RewardModel(nn.Module):
@@ -238,12 +238,13 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_current(self):
-        episodes = self.buffer.get_episodes()
-        total_lens = itertools.accumulate(len(ep) for ep in reversed(episodes))
-        eps_since_eval = [ep for ep, total in zip(reversed(episodes), total_lens) if total <= self.n_steps_eval_current]
-
-        loss, accuracy, corr_coef = self._validate_on_episodes(eps_since_eval, int(0.5 * sum(len(ep) for ep in eps_since_eval) / self.segment_size))
-        self._log_validation_metrics(loss, accuracy, corr_coef, prefix='current/')
+        episodes = self.buffer.get_episodes()[-self.done_eps_since_eval:]
+        self.done_eps_since_eval = 0
+        try:
+            loss, accuracy, corr_coef = self._validate_on_episodes(episodes, int(0.5 * sum(len(ep) for ep in episodes) / self.segment_size))
+            self._log_validation_metrics(loss, accuracy, corr_coef, prefix='current/')
+        except NoValidEpisodesError:
+            return
 
 
     def _validate_held_out(self):
@@ -309,7 +310,13 @@ class PrefPPOCallback(BasePrefCallback):
                     })
 
 
+    def _on_training_start(self) -> None:
+        self.done_eps_since_eval = 0
+
+
     def _on_step(self):
+        self.done_eps_since_eval += self.locals['dones'].sum().item()
+
         continue_training = super()._on_step()
         if not continue_training: return False
 
