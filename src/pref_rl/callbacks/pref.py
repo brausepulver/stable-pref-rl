@@ -48,6 +48,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.steps_since_train = 0
         self.has_trained = False
         self.num_feed = 0
+        self.training_progress = 0.0
         self.keep_training = None
 
         self.device = torch.device(
@@ -94,7 +95,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.preference_buffer[start:end] = preferences.detach().to(self.device)
 
         self.num_feed += len(keep_indices)
+        self.training_progress = self.num_feed / self.max_feed
         self.logger.record('pref/num_feed', self.num_feed)
+        self.logger.record('pref/training_progress', self.training_progress)
 
 
     @abstractmethod

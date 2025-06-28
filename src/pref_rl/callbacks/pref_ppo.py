@@ -56,6 +56,16 @@ class PrefPPOCallback(BasePrefCallback):
             if held_out_data_path else None
         )
 
+        try:
+            import wandb
+            if wandb.run is not None:
+                self.run = wandb.run
+                self.run.define_metric(step_metric='pref/training_progress', name='reward_model/*')
+                self.run.define_metric(step_metric='pref/num_feed', name='reward_model/*')
+
+        except ImportError:
+            pass
+
 
     def _init_callback(self):
         super()._init_callback()
@@ -150,6 +160,15 @@ class PrefPPOCallback(BasePrefCallback):
         self.logger.record('reward_model/train/accuracy', np.mean(accuracies))
         self.logger.record('reward_model/train/epochs', epoch + 1)
 
+        if self.run:
+            self.run.log({
+                'reward_model/train/loss': np.mean(losses),
+                'reward_model/train/accuracy': np.mean(accuracies),
+                'reward_model/train/epochs': epoch + 1,
+                'pref/num_feed': self.num_feed,
+                'pref/training_progress': self.training_progress,
+            })
+
         with torch.no_grad():
             if self.validate_on_train:
                 self._validate_train()
@@ -203,6 +222,15 @@ class PrefPPOCallback(BasePrefCallback):
         if corr_coef:
             self.logger.record(f"reward_model/eval/{prefix}corr_coef", corr_coef)
 
+        if self.run:
+            self.run.log({
+                f'reward_model/eval/{prefix}loss': loss,
+                f'reward_model/eval/{prefix}accuracy': accuracy,
+                f'reward_model/eval/{prefix}corr_coef': corr_coef,
+                **({ f'reward_model/eval/{prefix}corr_coef': corr_coef } if corr_coef is not None else {}),
+                'pref/num_feed': self.num_feed,
+                'pref/training_progress': self.training_progress,
+            })
 
     def _validate_train(self):
         loss, accuracy, corr_coef = self._validate_on_episodes(self.buffer.get_episodes(), len(self.segment_buffer))
@@ -212,9 +240,9 @@ class PrefPPOCallback(BasePrefCallback):
     def _validate_current(self):
         episodes = self.buffer.get_episodes()
         total_lens = itertools.accumulate(len(ep) for ep in reversed(episodes))
-        eps_since_train = [ep for ep, total in zip(reversed(episodes), total_lens) if total <= self.n_steps_reward]
+        eps_since_eval = [ep for ep, total in zip(reversed(episodes), total_lens) if total <= self.n_steps_eval_current]
 
-        loss, accuracy, corr_coef = self._validate_on_episodes(eps_since_train, int(0.5 * sum(len(ep) for ep in eps_since_train) / self.segment_size))
+        loss, accuracy, corr_coef = self._validate_on_episodes(eps_since_eval, int(0.5 * sum(len(ep) for ep in eps_since_eval) / self.segment_size))
         self._log_validation_metrics(loss, accuracy, corr_coef, prefix='current/')
 
 
@@ -268,6 +296,17 @@ class PrefPPOCallback(BasePrefCallback):
                 ep_info['pred_r_uncertainty_coef_var'] = np.mean(coef_vars)
                 
                 self.ensemble_reward_buffer[env_idx] = []
+
+                if self.run:
+                    self.run.log({
+                        'pref/ep_rew_mean': ep_info['pred_r_mean'],
+                        'pref/step_rew_mean': ep_info['pred_r_step'],
+                        'pref/ep_rew_std': ep_info['pred_r_std'],
+                        'reward_model/avg_member_std_ep': ep_info['pred_r_std_member'],
+                        'reward_model/avg_ensemble_std_rew': ep_info['pred_r_uncertainty'],
+                        'pref/num_feed': self.num_feed,
+                        'pref/training_progress': self.training_progress,
+                    })
 
 
     def _on_step(self):

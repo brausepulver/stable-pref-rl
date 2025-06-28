@@ -4,10 +4,11 @@ from stable_baselines3.common.utils import safe_mean
 
 
 class LogRolloutStatsCallback(BaseCallback):
-    def __init__(self, ep_info_log_keys: dict[str, str], window_size: int = None, **kwargs):
+    def __init__(self, ep_info_log_keys: dict[str, str], window_size: int = None, suffix_window_size: bool = False, **kwargs):
         super().__init__(**kwargs)
         self.ep_info_log_keys = ep_info_log_keys
         self.window_size = window_size
+        self.suffix_window_size = f"{window_size}_eps" if suffix_window_size else ""
 
 
     def _init_callback(self):
@@ -33,7 +34,7 @@ class LogRolloutStatsCallback(BaseCallback):
     def _log_data_for_key(self, ep_infos: list, ep_info_key: str, log_prefix: str, log_key: str):
         items = [ep_info[ep_info_key] for ep_info in ep_infos if ep_info_key in ep_info]
         if len(items) > 0:
-            self.logger.record(f"{log_prefix}/{log_key}_{self.window_size}", safe_mean(items))
+            self.logger.record(f"{log_prefix}/{log_key}{self.suffix_window_size}", safe_mean(items))
 
 
     def _on_step(self):
