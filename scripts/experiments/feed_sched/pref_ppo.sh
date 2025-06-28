@@ -152,9 +152,9 @@ for i in $(seq 1 8); do
         "training.total_timesteps=2000000" \
         "preset.method.clip_range.end=0.2" \
         preset.method.pref.n_steps_reward=32000 \
-        preset.method.pref.feed_batch_size=65 \
+        preset.method.pref.feed_batch_size=64 \
         "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
-        "logging.group=pref_ppo/schedules/n_steps_32000" &
+        "logging.group=pref_ppo/schedules/n_steps_32000_64" &
 done
 wait
 
@@ -168,7 +168,7 @@ for i in $(seq 1 8); do
         preset.method.pref.n_steps_reward=16000 \
         preset.method.pref.feed_batch_size=32 \
         "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
-        "logging.group=pref_ppo/schedules/n_steps_16000" &
+        "logging.group=pref_ppo/schedules/n_steps_16000_32" &
 done
 wait
 
@@ -182,7 +182,7 @@ for i in $(seq 1 8); do
         preset.method.pref.n_steps_reward=8000 \
         preset.method.pref.feed_batch_size=16 \
         "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
-        "logging.group=pref_ppo/schedules/n_steps_8000" &
+        "logging.group=pref_ppo/schedules/n_steps_8000_16" &
 done
 wait
 
@@ -196,7 +196,7 @@ for i in $(seq 1 8); do
         preset.method.pref.n_steps_reward=4000 \
         preset.method.pref.feed_batch_size=8 \
         "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
-        "logging.group=pref_ppo/schedules/n_steps_4000" &
+        "logging.group=pref_ppo/schedules/n_steps_4000_8" &
 done
 wait
 
@@ -210,7 +210,7 @@ for i in $(seq 1 8); do
         preset.method.pref.n_steps_reward=500 \
         preset.method.pref.feed_batch_size=1 \
         "logging.tags=[pref_ppo, experiment, entropy, schedules]" \
-        "logging.group=pref_ppo/schedules/n_steps_500" &
+        "logging.group=pref_ppo/schedules/n_steps_500_1" &
 done
 wait
 
