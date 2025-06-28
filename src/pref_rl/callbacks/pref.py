@@ -103,6 +103,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _on_step(self):
+        self.steps_since_train += self.training_env.num_envs
+
         obs, act, gt_rewards = self._get_current_step()
         annotations = torch.cat([obs, act, gt_rewards], dim=-1)
         self.buffer.add(annotations, self.locals['dones'])
@@ -115,8 +117,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         if self.n_steps_first_train is None and buffer_has_done:
             self.n_steps_first_train = self.num_timesteps
 
-        should_first_train = not self.has_trained and self.n_steps_first_train is not None and self.steps_since_train > self.n_steps_first_train
-        should_train = self.steps_since_train > self.n_steps_reward
+        should_first_train = not self.has_trained and self.n_steps_first_train is not None and self.steps_since_train >= self.n_steps_first_train
+        should_train = self.has_trained and self.steps_since_train >= self.n_steps_reward
         feedback_left = self.num_feed < self.max_feed
 
         if (should_first_train or should_train) and (feedback_left or self.keep_training):
@@ -134,7 +136,5 @@ class BasePrefCallback(RewardModifierCallback, ABC):
                 if self.on_first_trained: self.on_first_trained()
 
             self.logger.dump(step=self.num_timesteps)
-        else:
-            self.steps_since_train += self.training_env.num_envs
 
         return True if not self.has_trained else super()._on_step()

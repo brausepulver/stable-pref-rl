@@ -14,8 +14,15 @@ class LogRolloutStatsCallback(BaseCallback):
         self.window_size = self.window_size or self.training_env.num_envs
 
 
+    def _on_rollout_start(self) -> None:
+        self.rollout_done_eps_count = 0
+
+
     def _on_rollout_end(self) -> None:
         if len(self.model.ep_info_buffer) == 0 or len(self.model.ep_info_buffer[0]) == 0:
+            return
+
+        if self.rollout_done_eps_count == 0:
             return
 
         ep_infos = list(itertools.islice(reversed(self.model.ep_info_buffer), self.window_size))
@@ -30,4 +37,5 @@ class LogRolloutStatsCallback(BaseCallback):
 
 
     def _on_step(self):
+        self.rollout_done_eps_count += self.locals['dones'].sum().item()
         return True
