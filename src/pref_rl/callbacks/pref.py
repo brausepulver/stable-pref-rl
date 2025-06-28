@@ -50,6 +50,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.num_feed = 0
         self.training_progress = 0.0
         self.keep_training = None
+        self.n_steps_train_total = None
 
         self.device = torch.device(
             device or
@@ -139,5 +140,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
                 if self.on_first_trained: self.on_first_trained()
 
             self.logger.dump(step=self.num_timesteps)
+            self.n_steps_train_total = self.num_timesteps - self.n_steps_first_train
+
+        elif self.has_trained and not feedback_left:
+            self.training_progress = (self.num_timesteps - self.n_steps_first_train) / self.n_steps_train_total
 
         return True if not self.has_trained else super()._on_step()

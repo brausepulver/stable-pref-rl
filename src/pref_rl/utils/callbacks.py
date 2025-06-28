@@ -9,7 +9,7 @@ def get_default_callbacks():
         'pred_r_std': ('pref', 'ep_rew_std'),
         'pred_r_std_member': ('reward_model', 'avg_member_std_ep'),
         # 'pred_r_coef_var': ('reward_model', 'pred_rew_coef_var'),
-        'pred_r_uncertainty': ('reward_model', 'avg_ensemble_std_rew'),
+        'pred_r_uncertainty': ('reward_model', 'avg_ensemble_std_step'),
         # 'pred_r_uncertainty_coef_var': ('reward_model/', 'rew_model_coef_var'),
         'r': ('rollout', 'ep_rew_mean_current')
     }
