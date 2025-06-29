@@ -20,6 +20,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         teacher_kwargs: dict = {},
         log_prefix='pref/',
         n_steps_first_train: int = None,
+        n_steps_last_train: int = None,
         on_first_trained: callable = None,
         margins_stats_window_size: int = 100,
         on_trained: callable = None,
@@ -35,6 +36,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.train_teacher = teacher
         self.teacher_kwargs = teacher_kwargs
         self.n_steps_first_train = n_steps_first_train
+        self.n_steps_last_train = n_steps_last_train
         self.on_first_trained = on_first_trained
         self.margins_stats_window_size = margins_stats_window_size
         self.on_trained = on_trained
@@ -124,8 +126,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         should_first_train = not self.has_trained and self.n_steps_first_train is not None and self.steps_since_train >= self.n_steps_first_train
         should_train = self.has_trained and self.steps_since_train >= self.n_steps_reward
         feedback_left = self.num_feed < self.max_feed
+        should_stop_training = self.n_steps_last_train is not None and self.num_timesteps >= self.n_steps_last_train
 
-        if (should_first_train or should_train) and (feedback_left or self.keep_training):
+        if (should_first_train or should_train) and (feedback_left or self.keep_training) and not should_stop_training:
             sampling_method = 'uniform' if not self.has_trained else self.sampling_method
             if feedback_left:
                 self._expand_data(sampling_method)

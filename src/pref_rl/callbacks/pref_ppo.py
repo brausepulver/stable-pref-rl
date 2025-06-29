@@ -62,6 +62,8 @@ class PrefPPOCallback(BasePrefCallback):
                 self.run = wandb.run
                 self.run.define_metric(step_metric='pref/training_progress', name='reward_model/*')
                 self.run.define_metric(step_metric='pref/num_feed', name='reward_model/*')
+                self.run.define_metric(step_metric='pref/training_progress', name='pref/*')
+                self.run.define_metric(step_metric='pref/num_feed', name='pref/*')
 
         except ImportError:
             pass

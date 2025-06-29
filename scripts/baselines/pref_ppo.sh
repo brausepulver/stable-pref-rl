@@ -2,10 +2,10 @@
 
 BASE_PARAMS=(
     "preset=pref_ppo/quadruped_walk"
-    "training.total_timesteps=1000000"
+    "training.total_timesteps=2000000" \
+    "preset.method.clip_range.end=0.2" \
     "training.num_envs=16"
     "preset.env.limit_ep_steps=1000"
-    "preset.method.clip_range.end=0.3"
     "preset.method.unsuper.n_steps_unsuper=32000"
     "preset.method.pref.n_steps_reward=32000"
     "preset.method.pref.max_feed=2000"
@@ -47,7 +47,7 @@ for i in $(seq 1 8); do
         ${BASE_PARAMS[@]} \
         training.seed=$seed \
         preset.method.pref.sampler=entropy \
-        'logging.tags=[pref_ppo, baseline, entropy, d140e3]' \
+        'logging.tags=[pref_ppo, baseline, entropy]' \
         "logging.group=pref_ppo/baseline/entropy" &
 done
 wait
