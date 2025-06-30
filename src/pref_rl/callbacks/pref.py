@@ -24,6 +24,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         on_first_trained: callable = None,
         margins_stats_window_size: int = 100,
         on_trained: callable = None,
+        record_uniform_sampler_metrics: bool = True,
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
@@ -40,6 +41,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.on_first_trained = on_first_trained
         self.margins_stats_window_size = margins_stats_window_size
         self.on_trained = on_trained
+        self.record_uniform_sampler_metrics = record_uniform_sampler_metrics
 
         if not feed_schedule and not feed_batch_size:
             raise ValueError('Either feed_batch_size or feed_schedule must be set')
@@ -98,8 +100,15 @@ class BasePrefCallback(RewardModifierCallback, ABC):
                 total_timesteps=self.total_timesteps
             ))
 
+            episodes = self.buffer.get_episodes()
             num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
-            state_actions, rewards, metrics = self.sampler.sample_segments(self.buffer.get_episodes(), num_samples, sampling_method, self._get_predictor())
+            state_actions, rewards, metrics = self.sampler.sample_segments(
+                episodes,
+                num_samples,
+                sampling_method,
+                reward_model=self._get_predictor(),
+                record_uniform_metrics=self.record_uniform_sampler_metrics,
+            )
 
             if metrics:
                 for metric_name, metric_values in metrics.items():
