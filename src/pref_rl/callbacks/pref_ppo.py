@@ -32,7 +32,7 @@ class PrefPPOCallback(BasePrefCallback):
         learning_rate_reward: float = 3e-4,
         batch_size_reward: int = 128,
         reward_model_kwargs: dict = {},
-        n_steps_eval_current: int = None,
+        n_steps_eval_current: int = 32_000,
         train_members_sequential: bool = True,  # For consistency with B-Pref
         validate_on_train: bool = False,
         validate_on_held_out: bool = True,
