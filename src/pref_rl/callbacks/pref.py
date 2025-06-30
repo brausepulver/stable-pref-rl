@@ -61,6 +61,16 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             'cpu'
         )
 
+        self.run = None
+        try:
+            import wandb
+            if wandb.run is not None:
+                self.run = wandb.run
+                self.run.define_metric(step_metric='pref/training_progress', name='pref/*')
+                self.run.define_metric(step_metric='pref/num_feed', name='pref/*')
+        except ImportError:
+            pass
+
 
     def _init_callback(self):
         obs_size, act_size = self._get_input_sizes()
@@ -81,26 +91,42 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _expand_data(self, sampling_method: str):
-        progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
-        feed_batch_size = int(self.feed_schedule(
-            progress_remaining,
-            num_timesteps=self.num_timesteps,
-            total_timesteps=self.total_timesteps
-        ))
+            progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
+            feed_batch_size = int(self.feed_schedule(
+                progress_remaining,
+                num_timesteps=self.num_timesteps,
+                total_timesteps=self.total_timesteps
+            ))
 
-        num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
-        state_actions, rewards = self.sampler.sample_segments(self.buffer.get_episodes(), num_samples, sampling_method, self._get_predictor())
+            num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
+            state_actions, rewards, metrics = self.sampler.sample_segments(self.buffer.get_episodes(), num_samples, sampling_method, self._get_predictor())
 
-        preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
+            if metrics:
+                for metric_name, metric_values in metrics.items():
+                    metric_mean = metric_values.mean().cpu().item()
+                    metric_std = metric_values.std().cpu().item()
+                    
+                    self.logger.record(f'pref/sampler/{metric_name}_mean', metric_mean)
+                    self.logger.record(f'pref/sampler/{metric_name}_std', metric_std)
+                    
+                    if self.run:
+                        self.run.log({
+                            f'pref/sampler/{metric_name}_mean': metric_mean,
+                            f'pref/sampler/{metric_name}_std': metric_std,
+                            'pref/num_feed': self.num_feed,
+                            'pref/training_progress': self.training_progress,
+                        })
 
-        start, end = self.num_feed, self.num_feed + len(keep_indices)
-        self.segment_buffer[start:end] = state_actions[keep_indices].detach().to(self.device)
-        self.preference_buffer[start:end] = preferences.detach().to(self.device)
+            preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
-        self.num_feed += len(keep_indices)
-        self.training_progress = self.num_feed / self.max_feed
-        self.logger.record('pref/num_feed', self.num_feed)
-        self.logger.record('pref/training_progress', self.training_progress)
+            start, end = self.num_feed, self.num_feed + len(keep_indices)
+            self.segment_buffer[start:end] = state_actions[keep_indices].detach().to(self.device)
+            self.preference_buffer[start:end] = preferences.detach().to(self.device)
+
+            self.num_feed += len(keep_indices)
+            self.training_progress = self.num_feed / self.max_feed
+            self.logger.record('pref/num_feed', self.num_feed)
+            self.logger.record('pref/training_progress', self.training_progress)
 
 
     @abstractmethod

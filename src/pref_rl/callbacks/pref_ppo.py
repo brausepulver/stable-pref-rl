@@ -56,17 +56,9 @@ class PrefPPOCallback(BasePrefCallback):
             if held_out_data_path else None
         )
 
-        try:
-            import wandb
-            if wandb.run is not None:
-                self.run = wandb.run
-                self.run.define_metric(step_metric='pref/training_progress', name='reward_model/*')
-                self.run.define_metric(step_metric='pref/num_feed', name='reward_model/*')
-                self.run.define_metric(step_metric='pref/training_progress', name='pref/*')
-                self.run.define_metric(step_metric='pref/num_feed', name='pref/*')
-
-        except ImportError:
-            pass
+        if self.run is not None:
+            self.run.define_metric(step_metric='pref/training_progress', name='reward_model/*')
+            self.run.define_metric(step_metric='pref/num_feed', name='reward_model/*')
 
 
     def _init_callback(self):
@@ -213,7 +205,7 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = False):
-        segments, rewards = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model)
+        segments, rewards, _ = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
         return self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation)
 
