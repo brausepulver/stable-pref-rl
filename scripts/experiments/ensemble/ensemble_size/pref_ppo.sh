@@ -10,7 +10,7 @@ BASE_PARAMS=(
     "preset.method.pref.n_steps_reward=32000"
     "preset.method.pref.teacher=oracle"
     "preset.method.pref.device=cpu"
-    "preset.method.pref.sampler=entropy"
+    "preset.method.pref.sampler=disagreement"
 )
 
 for ensemble_size in 3 5 7; do
@@ -23,8 +23,8 @@ for ensemble_size in 3 5 7; do
             ${BASE_PARAMS[@]} \
             training.seed=$seed \
             "preset.method.pref.reward_model_kwargs.ensemble_size=${ensemble_size}" \
-            "logging.tags=[pref_ppo, experiment, entropy, ensemble_size]" \
-            "logging.group=pref_ppo/ensemble_size/entropy/${ensemble_size}" &
+            "logging.tags=[pref_ppo, experiment, disagreement", ensemble_size]" \
+            "logging.group=pref_ppo/ensemble_size/disagreement"/${ensemble_size}" &
     done
     wait
 done
