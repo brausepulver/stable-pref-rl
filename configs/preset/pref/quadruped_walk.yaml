@@ -1,10 +1,10 @@
 method:
   pref:
-    device: mps
+    device: cpu
 
     n_steps_reward: 32_000
     ann_buffer_size_eps: 100
-    sampler: disagreement
+    sampler: uniform
     segment_size: 50
     max_feed: 2_000
     feed_batch_size: 200
