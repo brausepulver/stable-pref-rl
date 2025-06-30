@@ -27,9 +27,9 @@ class ExponentialSchedule:
 
 class PiecewiseConstantSchedule:
     def __init__(self, pieces: list[tuple[int, int]]):
-        self.pieces = sorted(pieces, key=lambda p: p[0])
+        self.pieces = sorted(pieces, key=lambda p: p[0], reverse=True)
 
     def __call__(self, progress_remaining: float, num_timesteps: int, **kwargs):
-        for steps, value in self.pieces:
-            if num_timesteps >= steps:
+        for step, value in self.pieces:
+            if num_timesteps >= step:
                 return value
