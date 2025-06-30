@@ -92,50 +92,50 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
-    def _expand_data(self, sampling_method: str):
-            progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
-            feed_batch_size = int(self.feed_schedule(
-                progress_remaining,
-                num_timesteps=self.num_timesteps,
-                total_timesteps=self.total_timesteps
-            ))
+    def _expand_data(self, is_first_train: bool = False):
+        progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
+        feed_batch_size = int(self.feed_schedule(
+            progress_remaining,
+            num_timesteps=self.num_timesteps,
+            total_timesteps=self.total_timesteps
+        ))
 
-            episodes = self.buffer.get_episodes()
-            num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
-            state_actions, rewards, metrics = self.sampler.sample_segments(
-                episodes,
-                num_samples,
-                sampling_method,
-                reward_model=self._get_predictor(),
-                record_uniform_metrics=self.record_uniform_sampler_metrics,
-            )
+        episodes = self.buffer.get_episodes()
+        num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
+        state_actions, rewards, metrics = self.sampler.sample_segments(
+            episodes,
+            num_samples,
+            sampling_method='uniform' if is_first_train else self.sampling_method,
+            reward_model=self._get_predictor(),
+            record_uniform_metrics=False if is_first_train else self.record_uniform_sampler_metrics,
+        )
 
-            if metrics:
-                for metric_name, metric_values in metrics.items():
-                    metric_mean = metric_values.mean().cpu().item()
-                    metric_std = metric_values.std().cpu().item()
-                    
-                    self.logger.record(f'pref/sampler/{metric_name}_mean', metric_mean)
-                    self.logger.record(f'pref/sampler/{metric_name}_std', metric_std)
-                    
-                    if self.run:
-                        self.run.log({
-                            f'pref/sampler/{metric_name}_mean': metric_mean,
-                            f'pref/sampler/{metric_name}_std': metric_std,
-                            'pref/num_feed': self.num_feed,
-                            'pref/training_progress': self.training_progress,
-                        })
+        if metrics:
+            for metric_name, metric_values in metrics.items():
+                metric_mean = metric_values.mean().cpu().item()
+                metric_std = metric_values.std().cpu().item()
+                
+                self.logger.record(f'pref/sampler/{metric_name}_mean', metric_mean)
+                self.logger.record(f'pref/sampler/{metric_name}_std', metric_std)
+                
+                if self.run:
+                    self.run.log({
+                        f'pref/sampler/{metric_name}_mean': metric_mean,
+                        f'pref/sampler/{metric_name}_std': metric_std,
+                        'pref/num_feed': self.num_feed,
+                        'pref/training_progress': self.training_progress,
+                    })
 
-            preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
+        preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
-            start, end = self.num_feed, self.num_feed + len(keep_indices)
-            self.segment_buffer[start:end] = state_actions[keep_indices].detach().to(self.device)
-            self.preference_buffer[start:end] = preferences.detach().to(self.device)
+        start, end = self.num_feed, self.num_feed + len(keep_indices)
+        self.segment_buffer[start:end] = state_actions[keep_indices].detach().to(self.device)
+        self.preference_buffer[start:end] = preferences.detach().to(self.device)
 
-            self.num_feed += len(keep_indices)
-            self.training_progress = self.num_feed / self.max_feed
-            self.logger.record('pref/num_feed', self.num_feed)
-            self.logger.record('pref/training_progress', self.training_progress)
+        self.num_feed += len(keep_indices)
+        self.training_progress = self.num_feed / self.max_feed
+        self.logger.record('pref/num_feed', self.num_feed)
+        self.logger.record('pref/training_progress', self.training_progress)
 
 
     @abstractmethod
@@ -164,9 +164,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         should_stop_training = self.n_steps_last_train is not None and self.num_timesteps >= self.n_steps_last_train
 
         if (should_first_train or should_train) and (feedback_left or self.keep_training) and not should_stop_training:
-            sampling_method = 'uniform' if not self.has_trained else self.sampling_method
             if feedback_left:
-                self._expand_data(sampling_method)
+                self._expand_data(is_first_train=not self.has_trained)
             self._train_predictor()
             self.steps_since_train = 0
 
