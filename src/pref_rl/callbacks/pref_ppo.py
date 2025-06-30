@@ -1,6 +1,5 @@
 import einops
 from hydra.utils import to_absolute_path
-import itertools
 import numpy as np
 from pathlib import Path
 import torch
@@ -32,9 +31,10 @@ class PrefPPOCallback(BasePrefCallback):
         learning_rate_reward: float = 3e-4,
         batch_size_reward: int = 128,
         reward_model_kwargs: dict = {},
-        n_steps_eval_current: int = 32_000,
+        n_steps_eval_current: int = None,
         train_members_sequential: bool = True,  # For consistency with B-Pref
         validate_on_train: bool = False,
+        validate_on_current: bool = True,
         validate_on_held_out: bool = True,
         held_out_data_path: str = None,
         **kwargs
@@ -49,6 +49,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.n_steps_eval_current = n_steps_eval_current or self.n_steps_reward
         self.train_members_sequential = train_members_sequential
         self.validate_on_train = validate_on_train
+        self.validate_on_current = validate_on_current
         self.validate_on_held_out = validate_on_held_out
 
         self.held_out_data_path = (
@@ -204,39 +205,44 @@ class PrefPPOCallback(BasePrefCallback):
         )
 
 
-    def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = False):
-        segments, rewards, _ = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model)
+    def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = False, compute_sampler_metrics: bool = True):
+        segments, rewards, sampler_metrics = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model, compute_sampler_metrics)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
-        return self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation)
+        return (
+            *self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation),
+            sampler_metrics
+        )
 
 
-    def _log_validation_metrics(self, loss: float, accuracy: float, corr_coef: float | None, prefix: str = ''):
+    def _log_validation_metrics(self, loss: float, accuracy: float, corr_coef: float | None, sampler_metrics: dict | None, prefix: str = ''):
         self.logger.record(f"reward_model/eval/{prefix}loss", loss)
         self.logger.record(f"reward_model/eval/{prefix}accuracy", accuracy)
         if corr_coef:
             self.logger.record(f"reward_model/eval/{prefix}corr_coef", corr_coef)
+        if sampler_metrics:
+            self._log_sampler_metrics(sampler_metrics, prefix=prefix)
 
         if self.run:
             self.run.log({
                 f'reward_model/eval/{prefix}loss': loss,
                 f'reward_model/eval/{prefix}accuracy': accuracy,
-                f'reward_model/eval/{prefix}corr_coef': corr_coef,
                 **({ f'reward_model/eval/{prefix}corr_coef': corr_coef } if corr_coef is not None else {}),
                 'pref/num_feed': self.num_feed,
                 'pref/training_progress': self.training_progress,
             })
 
+
     def _validate_train(self):
-        loss, accuracy, corr_coef = self._validate_on_episodes(self.buffer.get_episodes(), len(self.segment_buffer))
-        self._log_validation_metrics(loss, accuracy, corr_coef)
+        loss, accuracy, corr_coef, sampler_metrics = self._validate_on_episodes(self.buffer.get_episodes(), len(self.segment_buffer))
+        self._log_validation_metrics(loss, accuracy, corr_coef, sampler_metrics)
 
 
     def _validate_current(self):
         episodes = self.buffer.get_episodes()[-self.done_eps_since_eval:]
         self.done_eps_since_eval = 0
         try:
-            loss, accuracy, corr_coef = self._validate_on_episodes(episodes, int(0.5 * sum(len(ep) for ep in episodes) / self.segment_size))
-            self._log_validation_metrics(loss, accuracy, corr_coef, prefix='current/')
+            loss, accuracy, corr_coef, sampler_metrics = self._validate_on_episodes(episodes, int(0.5 * sum(len(ep) for ep in episodes) / self.segment_size))
+            self._log_validation_metrics(loss, accuracy, corr_coef, sampler_metrics, prefix='current/')
         except NoValidEpisodesError:
             return
 
@@ -250,9 +256,10 @@ class PrefPPOCallback(BasePrefCallback):
             """)
         segments, rewards = torch.load(path)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
+        sampler_metrics = self.sampler.compute_metrics(segments, self.reward_model)
 
         loss, accuracy, corr_coef = self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences)
-        self._log_validation_metrics(loss, accuracy, corr_coef, prefix='held_out/')
+        self._log_validation_metrics(loss, accuracy, corr_coef, sampler_metrics, prefix='held_out/')
 
 
     def _predict_rewards(self):
@@ -316,8 +323,9 @@ class PrefPPOCallback(BasePrefCallback):
 
         checkpoint_reached = self.num_timesteps % self.n_steps_eval_current == 0
         if self.has_trained and checkpoint_reached:
-            with torch.no_grad():
-                self._validate_current()
-            self.logger.dump(step=self.num_timesteps)
+            if self.validate_on_current:
+                with torch.no_grad():
+                    self._validate_current()
+                self.logger.dump(step=self.num_timesteps)
 
         return True

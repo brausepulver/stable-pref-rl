@@ -128,7 +128,7 @@ class Sampler:
         return split_state_actions, split_rewards
 
 
-    def _compute_sampling_metrics(self, split_state_actions, split_rewards, reward_model):
+    def compute_metrics(self, split_state_actions, reward_model):
         with torch.no_grad():
             device = next(reward_model.parameters()).device
             member_rewards = reward_model(split_state_actions.to(device))
@@ -147,14 +147,14 @@ class Sampler:
         }
 
 
-    def sample_segments(self, episodes: list, num_samples: int, method: str = 'uniform', reward_model: callable = None, stratified: bool = False, record_uniform_metrics: bool = True):
+    def sample_segments(self, episodes: list, num_samples: int, method: str = 'uniform', reward_model: callable = None, stratified: bool = False, compute_uniform_metrics: bool = True):
         assert method in ('uniform', 'disagreement', 'entropy'), f"Unknown sampling method: {method}"
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
         split_state_actions, split_rewards = self._sample_random_segments(episodes, num_samples_expanded, stratified)
 
-        if record_uniform_metrics or method != 'uniform':
-            metrics = self._compute_sampling_metrics(split_state_actions, split_rewards, reward_model)
+        if compute_uniform_metrics or method != 'uniform':
+            metrics = self.compute_metrics(split_state_actions, reward_model)
         else:
             metrics = {}
 

@@ -20,5 +20,7 @@ method:
     #   eps_skip: 0
 
     validate_on_train: false
+    validate_on_current: true
+    n_steps_eval_current: 32_000
     validate_on_held_out: true
     held_out_data_path: data/validation_data.pkl

@@ -102,29 +102,14 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         episodes = self.buffer.get_episodes()
         num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
-        state_actions, rewards, metrics = self.sampler.sample_segments(
-            episodes,
-            num_samples,
-            sampling_method='uniform' if is_first_train else self.sampling_method,
-            reward_model=self._get_predictor(),
-            record_uniform_metrics=False if is_first_train else self.record_uniform_sampler_metrics,
-        )
+        sampling_method = 'uniform' if is_first_train else self.sampling_method
+        reward_model = self._get_predictor()
+        compute_uniform_metrics = False if is_first_train else self.record_uniform_sampler_metrics
 
-        if metrics:
-            for metric_name, metric_values in metrics.items():
-                metric_mean = metric_values.mean().cpu().item()
-                metric_std = metric_values.std().cpu().item()
-                
-                self.logger.record(f'pref/sampler/{metric_name}_mean', metric_mean)
-                self.logger.record(f'pref/sampler/{metric_name}_std', metric_std)
-                
-                if self.run:
-                    self.run.log({
-                        f'pref/sampler/{metric_name}_mean': metric_mean,
-                        f'pref/sampler/{metric_name}_std': metric_std,
-                        'pref/num_feed': self.num_feed,
-                        'pref/training_progress': self.training_progress,
-                    })
+        state_actions, rewards, sampler_metrics = self.sampler.sample_segments(episodes, num_samples, sampling_method, reward_model, compute_uniform_metrics)
+
+        if sampler_metrics:
+            self._log_sampler_metrics(sampler_metrics, prefix='sampler/')
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
@@ -136,6 +121,23 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.training_progress = self.num_feed / self.max_feed
         self.logger.record('pref/num_feed', self.num_feed)
         self.logger.record('pref/training_progress', self.training_progress)
+
+
+    def _log_sampler_metrics(self, sampler_metrics: dict, prefix: str = ''):
+        for metric_name, metric_values in sampler_metrics.items():
+            metric_mean = metric_values.mean().cpu().item()
+            metric_std = metric_values.std().cpu().item()
+
+            self.logger.record(f'reward_model/{prefix}{metric_name}_mean', metric_mean)
+            self.logger.record(f'reward_model/{prefix}{metric_name}_std', metric_std)
+
+            if self.run:
+                self.run.log({
+                    f'reward_model/{prefix}{metric_name}_mean': metric_mean,
+                    f'reward_model/{prefix}{metric_name}_std': metric_std,
+                    'pref/num_feed': self.num_feed,
+                    'pref/training_progress': self.training_progress,
+                })
 
 
     @abstractmethod
