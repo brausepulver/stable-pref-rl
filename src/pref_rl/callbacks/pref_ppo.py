@@ -38,6 +38,7 @@ class PrefPPOCallback(BasePrefCallback):
         validate_on_held_out: bool = True,
         held_out_data_path: str = None,
         log_sampler_metrics: bool = True,
+        ensemble_disjoint_data: bool = False,
         **kwargs
     ):
         super().__init__(log_sampler_metrics=log_sampler_metrics, **kwargs)
@@ -53,6 +54,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.validate_on_current = validate_on_current
         self.validate_on_held_out = validate_on_held_out
         self.log_sampler_metrics = log_sampler_metrics
+        self.ensemble_disjoint_data = ensemble_disjoint_data
 
         self.held_out_data_path = (
             Path(to_absolute_path(held_out_data_path))
@@ -112,8 +114,7 @@ class PrefPPOCallback(BasePrefCallback):
         return loss, accuracy
 
 
-    def _train_module_epoch(self, module: nn.Module, module_is_ensemble: bool = False):
-        dataset = TensorDataset(self.segment_buffer[:self.num_feed], self.preference_buffer[:self.num_feed])
+    def _train_module_epoch(self, module: nn.Module, dataset: TensorDataset, module_is_ensemble: bool = False):
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         losses = []
         accuracies = []
@@ -132,11 +133,27 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _train_reward_model_epoch(self):
-        if self.train_members_sequential:
-            losses, accuracies = zip(*[self._train_module_epoch(member) for member in self.reward_model.members])
-            return np.mean(losses), np.mean(accuracies)
+        segments = self.segment_buffer[:self.num_feed]
+        preferences = self.preference_buffer[:self.num_feed]
+        dataset = TensorDataset(segments, preferences)
 
-        return self._train_module_epoch(self.reward_model, self.rew_optimizer, module_is_ensemble=True)
+        if not self.train_members_sequential:
+            return self._train_module_epoch(self.reward_model, dataset, self.rew_optimizer, module_is_ensemble=True)
+
+        losses = []
+        accuracies = []
+
+        for index, member in enumerate(self.reward_model.members):
+            if self.ensemble_disjoint_data:
+                step = len(self.reward_model.members)
+                idx = torch.arange(index, self.num_feed, step, device=segments.device)
+                dataset = TensorDataset(segments[idx], preferences[idx])
+            
+            loss, accuracy = self._train_module_epoch(member, dataset)
+            losses.append(loss)
+            accuracies.append(accuracy)
+
+        return np.mean(losses), np.mean(accuracies)
 
 
     def _train_predictor(self):
