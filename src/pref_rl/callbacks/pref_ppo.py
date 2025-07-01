@@ -206,7 +206,7 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = False, compute_sampler_metrics: bool = True):
-        segments, rewards, sampler_metrics = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model, compute_sampler_metrics)
+        segments, rewards, sampler_metrics = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model, compute_uniform_metrics=compute_sampler_metrics)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
         return (
             *self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation),

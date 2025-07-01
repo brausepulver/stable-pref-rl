@@ -92,7 +92,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
-    def _expand_data(self, is_first_train: bool = False):
+    def _expand_data(self, sampling_method: str):
         progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
         feed_batch_size = int(self.feed_schedule(
             progress_remaining,
@@ -102,11 +102,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         episodes = self.buffer.get_episodes()
         num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
-        sampling_method = 'uniform' if is_first_train else self.sampling_method
         reward_model = self._get_predictor()
-        compute_uniform_metrics = False if is_first_train else self.record_uniform_sampler_metrics
 
-        state_actions, rewards, sampler_metrics = self.sampler.sample_segments(episodes, num_samples, sampling_method, reward_model, compute_uniform_metrics)
+        state_actions, rewards, sampler_metrics = self.sampler.sample_segments(episodes, num_samples, sampling_method, reward_model, compute_uniform_metrics=self.record_uniform_sampler_metrics)
 
         if sampler_metrics:
             self._log_sampler_metrics(sampler_metrics, prefix='sampler/')
@@ -166,8 +164,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         should_stop_training = self.n_steps_last_train is not None and self.num_timesteps >= self.n_steps_last_train
 
         if (should_first_train or should_train) and (feedback_left or self.keep_training) and not should_stop_training:
+            sampling_method = self.sampling_method if self.has_trained else 'uniform'
             if feedback_left:
-                self._expand_data(is_first_train=not self.has_trained)
+                self._expand_data(sampling_method)
             self._train_predictor()
             self.steps_since_train = 0
 
