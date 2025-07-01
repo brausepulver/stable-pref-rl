@@ -26,6 +26,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         on_trained: callable = None,
         log_sampler_metrics: bool = True,
         sampler_kwargs: dict = {},
+        save_episode_data: bool = False,
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
@@ -44,6 +45,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.on_trained = on_trained
         self.log_sampler_metrics = log_sampler_metrics
         self.sampler_kwargs = sampler_kwargs
+        self.save_episode_data = save_episode_data
 
         if not feed_schedule and not feed_batch_size:
             raise ValueError('Either feed_batch_size or feed_schedule must be set')
@@ -78,7 +80,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
     def _init_callback(self):
         obs_size, act_size = self._get_input_sizes()
-        self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps)
+        self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps, keep_all_eps=self.save_episode_data)
         self.sampler = Sampler(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size)
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher, teacher_kwargs=self.teacher_kwargs)
 

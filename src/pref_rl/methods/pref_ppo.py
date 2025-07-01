@@ -1,4 +1,3 @@
-import pickle
 from stable_baselines3 import PPO
 from stable_baselines3.common.buffers import RolloutBuffer
 from stable_baselines3.common.callbacks import CallbackList
@@ -8,11 +7,12 @@ from ..utils.callbacks import get_default_callbacks
 
 
 class PrefPPO(PPO):
-    def __init__(self, *args, run_id: str = None, save_final_ep_buffer=False, unsuper={}, pref={}, **kwargs):
+    def __init__(self, *args, run_id: str = None, save_callback_data=False, save_episode_data=False, unsuper={}, pref={}, **kwargs):
         super().__init__(*args, _init_setup_model=False, **kwargs)
 
         self.run_id = run_id
-        self.save_final_ep_buffer = save_final_ep_buffer
+        self.save_callback_data = save_callback_data
+        self.save_episode_data = save_episode_data
         self.unsuper_kwargs = unsuper
         self.pref_kwargs = pref
         self.unsuper_enabled = self.unsuper_kwargs['n_steps_unsuper'] is not None
@@ -31,11 +31,14 @@ class PrefPPO(PPO):
         self.pref_ppo_callback = PrefPPOCallback(
             n_steps_first_train=self.unsuper_kwargs['n_steps_unsuper'] or None,
             on_first_trained=on_first_trained,
+            save_episode_data=self.save_episode_data,
             **self.pref_kwargs
         )
+        self.unsupervised_callback = UnsupervisedCallback(**self.unsuper_kwargs) if self.unsuper_enabled else None
+
         self.callbacks = [
             self.pref_ppo_callback,
-            *([UnsupervisedCallback(**self.unsuper_kwargs)] if self.unsuper_enabled else []),
+            *([self.unsupervised_callback] if self.unsupervised_callback is not None else []),
             get_default_callbacks()
         ]
 
@@ -66,18 +69,39 @@ class PrefPPO(PPO):
 
 
     def _excluded_save_params(self):
-        return super()._excluded_save_params() + ['callbacks']
+        excluded = super()._excluded_save_params()
+        excluded.remove('rollout_buffer')
+        excluded.extend(['pref_ppo_callback', 'unsupervised_callback', 'callbacks'])
+        return excluded
 
 
     def _get_torch_save_params(self):
         ppo_state_dicts, ppo_vars = super()._get_torch_save_params()
-        state_dicts = ['pref_ppo_callback.reward_model', 'pref_ppo_callback.rew_optimizer']
-        return ppo_state_dicts + state_dicts, ppo_vars
+        state_dicts = ['pref_ppo_callback.reward_model', 'pref_ppo_callback.rew_optimizer'] if self.save_callback_data else []
+        vars = ['pref_ppo_callback.segment_buffer', 'pref_ppo_callback.preference_buffer'] if self.save_callback_data else []
+        return ppo_state_dicts + state_dicts, ppo_vars + vars
 
 
-    def save(self, path, exclude = None, include = None):
-        if self.save_final_ep_buffer:
-            with open(f"done_eps_{self.run_id}.pkl" if self.run_id else "done_eps.pkl", 'wb') as f:
-                pickle.dump(self.pref_ppo_callback.buffer.done_eps, f)
+    def save(self, *args, **kwargs):
+        if self.save_episode_data:
+            self.pref_ppo_data = {
+                'buffer': self.pref_ppo_callback.buffer,
+            }
 
-        return super().save(path, exclude, include)
+        if self.save_callback_data:
+            self.pref_ppo_data = {
+                'ensemble_reward_buffer': self.pref_ppo_callback.ensemble_reward_buffer,
+                'steps_since_train': self.pref_ppo_callback.steps_since_train,
+                'has_trained': self.pref_ppo_callback.has_trained,
+                'num_feed': self.pref_ppo_callback.num_feed,
+                'training_progress': self.pref_ppo_callback.training_progress,
+                'keep_training': self.pref_ppo_callback.keep_training,
+                'n_steps_train_total': self.pref_ppo_callback.n_steps_train_total,
+                'buffer': self.pref_ppo_callback.buffer,
+                'train_teacher': self.pref_ppo_callback.train_teacher,
+            }
+            self.unsupervised_data = {
+                '_buffer': self.unsupervised_callback._buffer,
+            }
+
+        return super().save(*args, **kwargs)

@@ -2,7 +2,7 @@
 
 BASE_PARAMS=(
     "preset=pebble/quadruped_walk"
-    "training.total_timesteps=1000000"
+    "training.total_timesteps=2000000"
     "preset.method.pref.max_feed=2000"
     "preset.method.pref.teacher=oracle"
     "preset.method.pref.device=cpu"

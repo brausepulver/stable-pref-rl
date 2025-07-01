@@ -11,6 +11,9 @@ BASE_PARAMS=(
     "preset.method.pref.max_feed=2000"
     "preset.method.pref.teacher=oracle"
     "preset.method.pref.device=cpu"
+    "preset.method.save_callback_data=true"
+    "preset.method.pref.ann_buffer_size_eps=100"
+    "preset.method.save_episode_data=true"
 )
 
 # Uniform sampling

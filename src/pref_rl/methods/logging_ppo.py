@@ -1,10 +1,3 @@
-from __future__ import annotations
-
-import io
-import pathlib
-import pickle
-from typing import Any, Iterable, Optional
-
 import numpy as np
 import torch
 from stable_baselines3 import PPO
@@ -39,13 +32,13 @@ class LoggingPPO(PPO):
         policy: str | torch.nn.Module,
         env: GymEnv | str,
         *,
-        save_final_ep_buffer: bool = False,
-        ann_buffer_size_eps: Optional[int] = None,
-        run_id: Optional[str] = None,
-        **kwargs: Any,
+        save_episode_data: bool = False,
+        ann_buffer_size_eps: int | None = None,
+        run_id: str | None = None,
+        **kwargs: any,
     ) -> None:
         super().__init__(policy, env, **kwargs)
-        self.save_final_ep_buffer = save_final_ep_buffer
+        self.save_episode_data = save_episode_data
         self.run_id = run_id
         self.episode_buffer = EpisodeBuffer(self.n_envs, ann_buffer_size_eps)
         self._recorder = _EpisodeRecorderCallback(self.episode_buffer)
@@ -77,18 +70,5 @@ class LoggingPPO(PPO):
         )
 
 
-    def save(
-        self,
-        path: str | pathlib.Path | io.BufferedIOBase,
-        exclude: Optional[Iterable[str]] = None,
-        include: Optional[Iterable[str]] = None,
-    ) -> None:
-        if self.save_final_ep_buffer:
-            name = f"done_eps_{self.run_id}.pkl" if self.run_id else "done_eps.pkl"
-            with open(name, "wb") as f:
-                pickle.dump(self.episode_buffer.done_eps, f)
-        super().save(path, exclude=exclude, include=include)
-
-
     def _excluded_save_params(self) -> list[str]:
-        return super()._excluded_save_params() + ["episode_buffer"]
+        return super()._excluded_save_params() + ["_recorder", *(["episode_buffer"] if self.save_episode_data else [])]
