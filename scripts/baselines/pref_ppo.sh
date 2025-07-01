@@ -2,8 +2,8 @@
 
 BASE_PARAMS=(
     "preset=pref_ppo/quadruped_walk"
-    "training.total_timesteps=2000000" \
-    "preset.method.clip_range.end=0.2" \
+    "training.total_timesteps=2000000"
+    "preset.method.clip_range.end=0.2"
     "training.num_envs=16"
     "preset.env.limit_ep_steps=1000"
     "preset.method.unsuper.n_steps_unsuper=32000"
