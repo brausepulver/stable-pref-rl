@@ -71,4 +71,4 @@ class LoggingPPO(PPO):
 
 
     def _excluded_save_params(self) -> list[str]:
-        return super()._excluded_save_params() + ["_recorder", *(["episode_buffer"] if self.save_episode_data else [])]
+        return super()._excluded_save_params() + ["_recorder", *(["episode_buffer"] if not self.save_episode_data else [])]
