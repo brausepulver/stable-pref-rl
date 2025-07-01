@@ -105,3 +105,25 @@ class PrefPPO(PPO):
             }
 
         return super().save(*args, **kwargs)
+
+
+    @classmethod
+    def load(cls, *args, **kwargs) -> "PrefPPO":
+        model: PrefPPO = super().load(*args, **kwargs)
+
+        if hasattr(model, "pref_ppo_data"):
+            d, cb = model.pref_ppo_data, model.pref_ppo_callback
+            cb.ensemble_reward_buffer = d["ensemble_reward_buffer"]
+            cb.steps_since_train      = d["steps_since_train"]
+            cb.has_trained            = d["has_trained"]
+            cb.num_feed               = d["num_feed"]
+            cb.training_progress      = d["training_progress"]
+            cb.keep_training          = d["keep_training"]
+            cb.n_steps_train_total    = d["n_steps_train_total"]
+            cb.buffer                 = d["buffer"]
+            cb.train_teacher          = d["train_teacher"]
+
+        if hasattr(model, "unsupervised_data") and model.unsupervised_callback is not None:
+            model.unsupervised_callback._buffer = model.unsupervised_data["_buffer"]
+
+        return model

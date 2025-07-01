@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 import hydra
-from importlib.util import find_spec
+import importlib
 from omegaconf import DictConfig, OmegaConf
 import os
 from stable_baselines3.common.base_class import BaseAlgorithm
@@ -19,7 +19,7 @@ CONFIG_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../configs")
 )
 
-has_wandb = find_spec("wandb") is not None
+has_wandb = importlib.util.find_spec("wandb") is not None
 _WANDB = None
 
 
@@ -31,6 +31,8 @@ def setup_wandb(cfg: DictConfig):
         project=cfg.logging.project,
         group=cfg.logging.group,
         tags=cfg.logging.tags,
+        id=cfg.get('wandb_run_id'),
+        resume='must' if cfg.get('resume', False) else None,
         config=OmegaConf.to_container(cfg, resolve=True),
         sync_tensorboard=True,
     )
@@ -58,6 +60,10 @@ def main(cfg: DictConfig) -> None:
     # Create eval environment
     eval_env = make_env(**cfg.preset.env)
 
+    if env_file := cfg.get('load_env'):
+        env = VecNormalize.load(env_file, env)
+        eval_env = VecNormalize.load(env_file, eval_env)
+
     # Setup callbacks
     callbacks = [
         EvalCallback(
@@ -73,46 +79,51 @@ def main(cfg: DictConfig) -> None:
             save_path="./checkpoints",
         )] if cfg.logging.save_checkpoints else []),
     ]
+
     if has_wandb:
         from wandb.integration.sb3 import WandbCallback
-        callback = WandbCallback()
-        callbacks.append(callback)
+        callbacks.append(WandbCallback())
 
-    # Create model
-    model: BaseAlgorithm = hydra.utils.instantiate(
-        cfg.preset.method,
-        policy,
-        env,
-        verbose=1,
-        tensorboard_log=f"runs/{run_id}",
-        seed=cfg.training.seed,
-        # Hydra arguments
-        _convert_="all"
-    )
+    # Load or create the model
+    if model_file := cfg.get('load_model'):
+        try:
+            model_class = hydra.utils.get_class(cfg.preset.method._target_)
+            model: BaseAlgorithm = model_class.load(model_file, env=env, print_system_info=True)
+        except Exception as e:
+            raise ValueError("Failed to load model: cfg.preset.method._target_ must be set to the model class path") from e
+    else:
+        model: BaseAlgorithm = hydra.utils.instantiate(
+            cfg.preset.method,
+            policy,
+            env,
+            verbose=1,
+            tensorboard_log=f"runs/{run_id}",
+            seed=cfg.training.seed,
+            # Hydra args
+            _convert_="all"
+        )
 
     try:
-        # Train model
+        # Train the model
         log_freq_rollouts = cfg.preset.get('logging', {}).get('log_freq_rollouts')
         model.learn(
             total_timesteps=cfg.training.total_timesteps,
             callback=CallbackList(callbacks),
             progress_bar=True,
+            reset_num_timesteps=not cfg.get('resume', False),
             **({'log_interval': log_freq_rollouts} if log_freq_rollouts else {})
         )
 
-        # Save final model
+        # Save the final model and environment
         model.save(f"final_model_{run_id}")
-
-        # Save normalized env stats
         if isinstance(env, VecNormalize):
             env.save(f"vec_normalize_{run_id}.pkl")
-
     except KeyboardInterrupt:
         print("Saving model...")
         model.save(f"interrupted_model_{run_id}")
-
+        if isinstance(env, VecNormalize):
+            env.save(f"vec_normalize_{run_id}.pkl")
     finally:
-        # Close environments
         env.close()
         eval_env.close()
         if has_wandb:
