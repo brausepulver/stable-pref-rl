@@ -37,9 +37,10 @@ class PrefPPOCallback(BasePrefCallback):
         validate_on_current: bool = True,
         validate_on_held_out: bool = True,
         held_out_data_path: str = None,
+        log_sampler_metrics: bool = True,
         **kwargs
     ):
-        super().__init__(**kwargs)
+        super().__init__(log_sampler_metrics=log_sampler_metrics, **kwargs)
 
         self.n_epochs_reward = n_epochs_reward
         self.train_acc_threshold_reward = train_acc_threshold_reward
@@ -51,6 +52,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.validate_on_train = validate_on_train
         self.validate_on_current = validate_on_current
         self.validate_on_held_out = validate_on_held_out
+        self.log_sampler_metrics = log_sampler_metrics
 
         self.held_out_data_path = (
             Path(to_absolute_path(held_out_data_path))
@@ -219,7 +221,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.logger.record(f"reward_model/eval/{prefix}accuracy", accuracy)
         if corr_coef:
             self.logger.record(f"reward_model/eval/{prefix}corr_coef", corr_coef)
-        if sampler_metrics:
+        if self.log_sampler_metrics and sampler_metrics:
             self._log_sampler_metrics(sampler_metrics, prefix=prefix)
 
         if self.run:

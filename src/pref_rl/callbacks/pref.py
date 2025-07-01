@@ -24,7 +24,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         on_first_trained: callable = None,
         margins_stats_window_size: int = 100,
         on_trained: callable = None,
-        record_uniform_sampler_metrics: bool = True,
+        log_sampler_metrics: bool = True,
+        sampler_kwargs: dict = {},
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
@@ -41,7 +42,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.on_first_trained = on_first_trained
         self.margins_stats_window_size = margins_stats_window_size
         self.on_trained = on_trained
-        self.record_uniform_sampler_metrics = record_uniform_sampler_metrics
+        self.log_sampler_metrics = log_sampler_metrics
+        self.sampler_kwargs = sampler_kwargs
 
         if not feed_schedule and not feed_batch_size:
             raise ValueError('Either feed_batch_size or feed_schedule must be set')
@@ -92,6 +94,32 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
+    def _sample_segments(self, episodes, num_samples, sampling_method, reward_model):
+        uniform_frac = self.sampler_kwargs.get('uniform_fraction', 0.0) if sampling_method != 'uniform' else 0.0
+        num_uniform = int(num_samples * uniform_frac)
+        num_specific = num_samples - num_uniform
+
+        state_actions, rewards, _ = self.sampler.sample_segments(
+            episodes,
+            num_specific,
+            sampling_method,
+            reward_model,
+        )
+
+        if num_uniform > 0:
+            state_actions_uniform, rewards_uniform, _ = self.sampler.sample_segments(
+                episodes,
+                num_uniform,
+                'uniform',
+                reward_model,
+            )
+            state_actions = torch.cat([state_actions, state_actions_uniform], dim=0)
+            rewards = torch.cat([rewards, rewards_uniform], dim=1)
+
+        metrics = self.sampler.compute_metrics(state_actions, reward_model) if self.log_sampler_metrics else {}
+        return state_actions, rewards, metrics
+
+
     def _expand_data(self, sampling_method: str):
         progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
         feed_batch_size = int(self.feed_schedule(
@@ -104,9 +132,14 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
         reward_model = self._get_predictor()
 
-        state_actions, rewards, sampler_metrics = self.sampler.sample_segments(episodes, num_samples, sampling_method, reward_model, compute_uniform_metrics=self.record_uniform_sampler_metrics)
+        state_actions, rewards, sampler_metrics = self._sample_segments(
+            episodes,
+            num_samples,
+            sampling_method,
+            reward_model
+        )
 
-        if sampler_metrics:
+        if self.log_sampler_metrics and sampler_metrics:
             self._log_sampler_metrics(sampler_metrics, prefix='sampler/')
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
