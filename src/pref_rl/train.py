@@ -10,14 +10,16 @@ from stable_baselines3.common.vec_env import VecNormalize
 import uuid
 from .envs import make_vec_env as make_env
 import torch
+import re
 
 
 if num_threads := os.getenv('TORCH_NUM_THREADS'):
     torch.set_num_threads(int(num_threads))
 
-CONFIG_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "../../configs")
+PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../")
 )
+CONFIG_DIR = os.path.join(PROJECT_ROOT, "configs")
 
 has_wandb = importlib.util.find_spec("wandb") is not None
 _WANDB = None
@@ -37,7 +39,10 @@ def setup_wandb(cfg: DictConfig):
         sync_tensorboard=True,
     )
     if os.getenv('WANDB_LOG_CODE') == 'true':
-        run.log_code(root='../../', include_fn=lambda path: path.startswith('src/') and path.endswith('.py'))
+        run.log_code(
+            root=PROJECT_ROOT,
+            include_fn=lambda path: re.search(rf"^{PROJECT_ROOT}/(.env|src/.*\.py)$", path) is not None  # Save .env and source files
+        )
     return run
 
 
