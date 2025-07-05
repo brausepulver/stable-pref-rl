@@ -9,7 +9,7 @@ class EpisodeBuffer:
     def __init__(self, n_envs, n_episodes, keep_all_eps=False):
         self.n_episodes = n_episodes
         self.keep_all_eps = keep_all_eps
-        self.done_eps = deque(maxlen=n_episodes if not self.keep_all_eps else None)
+        self.done_eps = deque(maxlen=self.n_episodes if not self.keep_all_eps else None)
         self._running_eps = [[] for _ in range(n_envs)]
 
 
@@ -25,8 +25,10 @@ class EpisodeBuffer:
 
     def get_episodes(self):
         running_ep_tensors = [torch.stack(ep) for ep in self._running_eps if len(ep) > 0]
-        eps = list(self.done_eps) + running_ep_tensors
-        return eps if not self.keep_all_eps else eps[-self.n_episodes:]
+        done_eps = list(self.done_eps)
+        if self.keep_all_eps:
+            done_eps = done_eps[-self.n_episodes:]
+        return done_eps + running_ep_tensors
 
 
 class Teacher:
