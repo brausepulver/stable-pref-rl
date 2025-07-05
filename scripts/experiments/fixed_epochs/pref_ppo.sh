@@ -22,10 +22,11 @@ for n_epochs_reward in 1 2 5 10; do
         train \
             ${BASE_PARAMS[@]} \
             training.seed=$seed \
-            "preset.method.pref.train_acc_threshold_reward=0" \
+            "preset.method.pref.train_acc_threshold_reward=1" \
             "preset.method.pref.n_epochs_reward=${n_epochs_reward}" \
-            "logging.tags=[pref_ppo, experiment, disagreement, disjoint_data, n_epochs_reward]" \
+            "logging.tags=[pref_ppo, experiment, disagreement, n_epochs_reward]" \
             "logging.group=pref_ppo/disjoint_data/disagreement/${n_epochs_reward}" &
     done
     wait
 done
+    

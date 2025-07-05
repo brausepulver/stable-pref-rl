@@ -24,8 +24,8 @@ for train_acc_threshold_reward in 0.97 0.90 0.75 0.50; do
             training.seed=$seed \
             "preset.method.pref.train_acc_threshold_reward=${train_acc_threshold_reward}" \
             "preset.method.pref.n_epochs_reward=100" \
-            "logging.tags=[pref_ppo, experiment, disagreement, disjoint_data, train_acc_threshold_reward]" \
-            "logging.group=pref_ppo/disjoint_data/disagreement/${train_acc_threshold_reward}" &
+            "logging.tags=[pref_ppo, experiment, disagreement, train_acc_threshold_reward]" \
+            "logging.group=pref_ppo/acc_threshold/disagreement/${train_acc_threshold_reward}" &
     done
     wait
 done

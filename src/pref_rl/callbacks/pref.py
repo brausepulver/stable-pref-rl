@@ -189,6 +189,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             recent_eps = list(itertools.islice(reversed(self.buffer.get_episodes()), self.margins_stats_window_size))
             self.train_teacher.update_thresholds(recent_eps)
 
+            self.logger.record('pref/num_episodes', len(self.buffer.done_eps))
+
         buffer_has_done = len(self.buffer.done_eps) > 0
         if self.n_steps_first_train is None and buffer_has_done:
             self.n_steps_first_train = self.num_timesteps
