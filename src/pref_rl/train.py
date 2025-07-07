@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 import hydra
-import importlib
+from importlib.util import find_spec
 from omegaconf import DictConfig, OmegaConf
 import os
 from stable_baselines3.common.base_class import BaseAlgorithm
@@ -21,7 +21,7 @@ PROJECT_ROOT = os.path.abspath(
 )
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "configs")
 
-has_wandb = importlib.util.find_spec("wandb") is not None
+has_wandb = find_spec("wandb") is not None
 _WANDB = None
 
 
@@ -131,7 +131,7 @@ def main(cfg: DictConfig) -> None:
     finally:
         env.close()
         eval_env.close()
-        if has_wandb:
+        if has_wandb and _WANDB:
             _WANDB.finish()
 
 

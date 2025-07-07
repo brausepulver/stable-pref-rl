@@ -22,7 +22,7 @@ for uniform_fraction in 0.1 0.2 0.3 0.5 0.7 0.9; do
                 ${BASE_PARAMS[@]} \
                 training.seed=$seed \
                 preset.method.pref.sampler=$sampler \
-                preset.method.pref.sampler.uniform_fraction=$uniform_fraction \
+                "preset.method.pref.sampler_kwargs.uniform_fraction=$uniform_fraction" \
                 "logging.tags=[pref_ppo, experiment, ${sampler}]" \
                 "logging.group=pref_ppo/uniform_fraction/${sampler}/${uniform_fraction}" &
         done
