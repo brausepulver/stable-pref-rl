@@ -1,6 +1,10 @@
 .claude/
 .vscode/
+.out/
+.outbound/
 .env
+.outignore
+.outboundignore
 
 .env/
 env/

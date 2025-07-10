@@ -23,6 +23,7 @@ for ann_buffer_size_eps in null 128 64 32 16; do
             ${BASE_PARAMS[@]} \
             training.seed=$seed \
             "preset.method.pref.ann_buffer_size_eps=${ann_buffer_size_eps}" \
+            "+preset.method.pref.margins_stats_window_size=${ann_buffer_size_eps}" \
             "logging.tags=[pref_ppo, experiment, disagreement, ann_buffer_size_eps]" \
             "logging.group=pref_ppo/ann_buffer_size_eps/disagreement/${ann_buffer_size_eps}" &
     done

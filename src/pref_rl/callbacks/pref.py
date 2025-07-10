@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
 import itertools
+from typing import Callable
+
 import torch
+
 from .reward_mod import RewardModifierCallback
 from ..utils.pref import EpisodeBuffer, Teacher, Sampler
 from ..config import ConstantSchedule
@@ -10,20 +13,21 @@ class BasePrefCallback(RewardModifierCallback, ABC):
     def __init__(self,
         device: str = 'cpu',
         n_steps_reward: int = 32_000,
-        ann_buffer_size_eps: int = None,
+        ann_buffer_size_eps: int | None = None,
         sampler: str = 'uniform',
         segment_size: int = 50,
         max_feed: int = 2_000,
+        feed_buffer_size: int | None = None,
         feed_batch_size: int | None = 200,
-        feed_schedule: callable = None,
-        teacher: str = None,
+        feed_schedule: Callable | None = None,
+        teacher: str = 'oracle',
         teacher_kwargs: dict = {},
         log_prefix='pref/',
-        n_steps_first_train: int = None,
-        n_steps_last_train: int = None,
-        on_first_trained: callable = None,
+        n_steps_first_train: int | None = None,
+        n_steps_last_train: int | None = None,
+        on_first_trained: Callable | None = None,
         margins_stats_window_size: int = 100,
-        on_trained: callable = None,
+        on_trained: Callable | None = None,
         log_sampler_metrics: bool = True,
         sampler_kwargs: dict = {},
         save_episode_data: bool = False,
@@ -36,7 +40,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.sampling_method = sampler
         self.segment_size = segment_size
         self.max_feed = max_feed
-        self.train_teacher = teacher
+        self.feed_buf_size = feed_buffer_size or max_feed
+        self.train_teacher_str = teacher
         self.teacher_kwargs = teacher_kwargs
         self.n_steps_first_train = n_steps_first_train
         self.n_steps_last_train = n_steps_last_train
@@ -49,6 +54,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         if not feed_schedule and not feed_batch_size:
             raise ValueError('Either feed_batch_size or feed_schedule must be set')
+        if feed_batch_size and self.feed_buf_size and self.feed_buf_size < feed_batch_size:
+            raise ValueError('feed_buffer_size must be greater than or equal to feed_batch_size')
         self.feed_schedule = feed_schedule or ConstantSchedule(feed_batch_size)
 
         assert self.ann_buffer_size_eps is None or self.margins_stats_window_size <= self.ann_buffer_size_eps
@@ -59,6 +66,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.training_progress = 0.0
         self.keep_training = None
         self.n_steps_train_total = None
+        self.buffer_position = 0
 
         self.device = torch.device(
             device or
@@ -82,11 +90,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         obs_size, act_size = self._get_input_sizes()
         self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps, keep_all_eps=self.save_episode_data)
         self.sampler = Sampler(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size)
-        self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher, teacher_kwargs=self.teacher_kwargs)
+        self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher_str, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
-        self.segment_buffer = torch.empty((self.max_feed, 2, self.segment_size, segment_dim), device=self.device).detach()
-        self.preference_buffer = torch.empty((self.max_feed,), device=self.device).detach()
+        self.segment_buffer = torch.empty((self.feed_buf_size, 2, self.segment_size, segment_dim), device=self.device).detach()
+        self.preference_buffer = torch.empty((self.feed_buf_size,), device=self.device).detach()
 
         self.total_timesteps = self.model._total_timesteps
 
@@ -122,6 +130,29 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         return state_actions, rewards, metrics
 
 
+    def _add_to_buffer(self, state_actions, preferences, keep_indices):
+        num_items = len(keep_indices)
+        
+        if num_items > 0:
+            start_pos = self.buffer_position % self.feed_buf_size
+            end_pos = (self.buffer_position + num_items) % self.feed_buf_size
+            
+            if start_pos < end_pos:
+                # No wraparound
+                self.segment_buffer[start_pos:end_pos] = state_actions[keep_indices].detach().to(self.device)
+                self.preference_buffer[start_pos:end_pos] = preferences.detach().to(self.device)
+            else:
+                # Wraparound
+                first_chunk = self.feed_buf_size - start_pos
+                self.segment_buffer[start_pos:] = state_actions[keep_indices[:first_chunk]].detach().to(self.device)
+                self.preference_buffer[start_pos:] = preferences[:first_chunk].detach().to(self.device)
+                if end_pos > 0:
+                    self.segment_buffer[:end_pos] = state_actions[keep_indices[first_chunk:]].detach().to(self.device)
+                    self.preference_buffer[:end_pos] = preferences[first_chunk:].detach().to(self.device)
+            
+            self.buffer_position += num_items
+
+
     def _expand_data(self, sampling_method: str):
         progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
         feed_batch_size = int(self.feed_schedule(
@@ -146,13 +177,12 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
-        start, end = self.num_feed, self.num_feed + len(keep_indices)
-        self.segment_buffer[start:end] = state_actions[keep_indices].detach().to(self.device)
-        self.preference_buffer[start:end] = preferences.detach().to(self.device)
+        self._add_to_buffer(state_actions, preferences, keep_indices)
 
         self.num_feed += len(keep_indices)
         self.training_progress = self.num_feed / self.max_feed
         self.logger.record('pref/num_feed', self.num_feed)
+        self.logger.record('pref/feed_buffer_pos', self.buffer_position)
         self.logger.record('pref/training_progress', self.training_progress)
 
 

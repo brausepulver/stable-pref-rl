@@ -1,6 +1,5 @@
 import gymnasium as gym
 from gymnasium.wrappers import TimeLimit
-import metaworld.envs.mujoco.env_dict as _env_dict
 import numpy as np
 import shimmy.dm_control_compatibility
 from stable_baselines3.common.monitor import Monitor
@@ -56,6 +55,8 @@ def get_dm_control_factory(name: str, limit_ep_steps=1000, render_mode=None):
 
 
 def get_metaworld_factory(name: str, render_mode=None):
+    import metaworld.envs.mujoco.env_dict as _env_dict
+
     def factory() -> gym.Env:
         env_cls = _env_dict.ALL_V2_ENVIRONMENTS[name]
         env = env_cls(render_mode=render_mode)

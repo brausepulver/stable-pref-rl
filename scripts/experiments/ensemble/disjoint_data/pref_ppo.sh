@@ -11,7 +11,7 @@ BASE_PARAMS=(
     "preset.method.pref.teacher=oracle"
     "preset.method.pref.device=cpu"
     "preset.method.pref.sampler=disagreement"
-    "preset.method.pref.reward_model_kwargs.ensemble_disjoint_data=true"
+    "preset.method.pref.ensemble_disjoint_data=true"
 )
 
 for train_acc_threshold_reward in 0.97 0.90 0.75 0.50; do

@@ -138,7 +138,7 @@ class PrefPPOCallback(BasePrefCallback):
         dataset = TensorDataset(segments, preferences)
 
         if not self.train_members_sequential:
-            return self._train_module_epoch(self.reward_model, dataset, self.rew_optimizer, module_is_ensemble=True)
+            return self._train_module_epoch(self.reward_model, dataset, module_is_ensemble=True)
 
         losses = []
         accuracies = []
