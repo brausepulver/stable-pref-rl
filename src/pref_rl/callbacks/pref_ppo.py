@@ -195,6 +195,76 @@ class PrefPPOCallback(BasePrefCallback):
                 self._validate_held_out()
 
 
+    def _calculate_calibration_metrics(self, pred_returns: torch.Tensor, preferences: torch.Tensor):
+        inputs = pred_returns[..., 1] - pred_returns[..., 0]
+        probs = torch.sigmoid(inputs.abs())
+        
+        pred_preferences = torch.argmax(pred_returns, dim=-1)
+        correct_mask = (pred_preferences == preferences)
+        incorrect_mask = ~correct_mask
+        
+        return {
+            'confidence_correct': probs[correct_mask].mean().item() if correct_mask.any() else None,
+            'confidence_incorrect': probs[incorrect_mask].mean().item() if incorrect_mask.any() else None,
+        }
+
+
+    def _compute_batch_metrics(self, segments: torch.Tensor, preferences: torch.Tensor):
+        segments = segments.to(self.device)
+        preferences = preferences.to(self.device)
+        
+        ensemble_preds = self.reward_model(segments)
+        
+        member_metrics = []
+        for member_pred in ensemble_preds:
+            loss, accuracy = self._calculate_loss(member_pred, preferences)
+            member_returns = einops.reduce(member_pred, 'batch pair segment 1 -> batch pair', 'sum')
+            calibration = self._calculate_calibration_metrics(member_returns, preferences)
+            
+            member_metrics.append({
+                'loss': loss.item(),
+                'accuracy': accuracy,
+                **calibration
+            })
+        
+        ensemble_pred = self.ensemble_agg_fn(ensemble_preds)
+        loss, accuracy = self._calculate_loss(ensemble_pred, preferences)
+        ensemble_returns = einops.reduce(ensemble_pred, 'batch pair segment 1 -> batch pair', 'sum')
+        calibration = self._calculate_calibration_metrics(ensemble_returns, preferences)
+
+        return {
+            'ensemble': {
+                'loss': loss.item(),
+                'accuracy': accuracy,
+                **calibration
+            },
+            'members': member_metrics
+        }
+
+
+    def _aggregate_metrics(self, batch_metrics_list: list):
+        ensemble_metrics = [b['ensemble'] for b in batch_metrics_list]
+        member_metrics = [m for b in batch_metrics_list for m in b['members']]
+        
+        def avg_not_none(metrics_list, key):
+            values = [m[key] for m in metrics_list if m.get(key) is not None]
+            return np.mean(values) if values else 0
+    
+        metrics = {
+            'loss': np.mean([m['loss'] for m in ensemble_metrics]),
+            'accuracy': np.mean([m['accuracy'] for m in ensemble_metrics]),
+            'member_loss': np.mean([m['loss'] for m in member_metrics]),
+            'member_accuracy': np.mean([m['accuracy'] for m in member_metrics]),
+        }
+        calibration_metrics = {
+            'conf_good': avg_not_none(ensemble_metrics, 'confidence_correct'),
+            'conf_bad': avg_not_none(ensemble_metrics, 'confidence_incorrect'),
+            'member_conf_good': avg_not_none(member_metrics, 'confidence_correct'),
+            'member_conf_bad': avg_not_none(member_metrics, 'confidence_incorrect'),
+        }
+        return {**metrics, **calibration_metrics}
+
+
     def _calculate_corr_coef(self, pred_rewards: torch.Tensor, gt_rewards: torch.Tensor):
         gt_returns = einops.reduce(gt_rewards, 'pair batch segment -> (pair batch)', 'sum')
         pred_returns = einops.reduce(pred_rewards, 'pair batch segment -> (pair batch)', 'sum')
@@ -203,49 +273,40 @@ class PrefPPOCallback(BasePrefCallback):
         return corr_matrix[0, 1]
 
 
+    def _compute_correlation(self, segments: torch.Tensor, rewards: torch.Tensor):
+        rewards = einops.rearrange(rewards, 'pair batch segment -> batch pair segment')
+        dataset = TensorDataset(segments, rewards)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, pin_memory=self.device.type == 'cuda')
+        
+        correlations = []
+        for batch_segments, batch_rewards in dataloader:
+            ensemble_preds = self.reward_model(batch_segments.to(self.device))
+            ensemble_rewards = self.ensemble_agg_fn(ensemble_preds).squeeze(-1)
+            corr = self._calculate_corr_coef(ensemble_rewards, batch_rewards.to(self.device))
+            correlations.append(corr)
+        
+        return np.mean(correlations) if correlations else None
+
+
     def _validate_on_segments(self, segments: torch.Tensor, rewards: torch.Tensor, preferences: torch.Tensor, compute_correlation: bool = False):
         self.reward_model.eval()
-
+        
         dataset = TensorDataset(segments, preferences)
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, pin_memory=self.device.type == 'cuda')
-
-        batch_losses, batch_accuracies = [], []
-        member_losses, member_accuracies = [], []
-
-        for segments, preferences in dataloader:
-            segments = segments.to(self.device)
-            preferences = preferences.to(self.device)
-
-            ensemble_preds = self.reward_model(segments)
-            for member_preds in ensemble_preds:
-                loss, accuracy = self._calculate_loss(member_preds, preferences)
-                member_losses.append(loss.item())
-                member_accuracies.append(accuracy)
-
-            pred_rewards = self.ensemble_agg_fn(ensemble_preds)
-            loss, accuracy = self._calculate_loss(pred_rewards, preferences)
-            batch_losses.append(loss.item())
-            batch_accuracies.append(accuracy)
-
-        batch_corrs = []
+        
+        batch_metrics_list = []
+        for batch_segments, batch_preferences in dataloader:
+            batch_metrics = self._compute_batch_metrics(batch_segments, batch_preferences)
+            batch_metrics_list.append(batch_metrics)
+        
+        results = self._aggregate_metrics(batch_metrics_list)
+        
         if compute_correlation:
-            rewards = einops.rearrange(rewards, 'pair batch segment -> batch pair segment')
-            dataset = TensorDataset(segments, rewards)
-            dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, pin_memory=self.device.type == 'cuda')
-
-            for segments, rewards in dataloader:
-                member_pred_rew = self.reward_model(segments.to(self.device))
-                member_rewards = self.ensemble_agg_fn(member_pred_rew).squeeze(-1)
-                corr_coef = self._calculate_corr_coef(member_rewards, rewards.to(self.device))
-                batch_corrs.append(corr_coef)
-
-        return {
-            'loss': np.mean(batch_losses),
-            'accuracy': np.mean(batch_accuracies),
-            'corr_coef': np.mean(batch_corrs) if batch_corrs else None,
-            'member_loss': np.mean(member_losses),
-            'member_accuracy': np.mean(member_accuracies)
-        }
+            results['corr_coef'] = self._compute_correlation(segments, rewards)
+        else:
+            results['corr_coef'] = None
+        
+        return results
 
 
     def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = False, compute_sampler_metrics: bool = True):
@@ -258,23 +319,17 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _log_validation_metrics(self, metrics: dict, prefix: str = ''):
-        self.logger.record(f"reward_model/eval/{prefix}loss", metrics.get('loss'))
-        self.logger.record(f"reward_model/eval/{prefix}accuracy", metrics.get('accuracy'))
-        self.logger.record(f"reward_model/eval/{prefix}member_loss", metrics.get('member_loss'))
-        self.logger.record(f"reward_model/eval/{prefix}member_accuracy", metrics.get('member_accuracy'))
+        scoped_metrics = {f'reward_model/eval/{prefix}{key}': value for key, value in metrics.items() if value is not None}
 
-        if metrics.get('corr_coef') is not None:
-            self.logger.record(f"reward_model/eval/{prefix}corr_coef", metrics.get('corr_coef'))
+        if self.log_sampler_metrics and metrics.get('sampler_metrics') is not None:
+            self._log_sampler_metrics(metrics.pop('sampler_metrics'), prefix=prefix)
 
-        sampler_metrics = metrics.get('sampler_metrics')
-        if self.log_sampler_metrics and sampler_metrics:
-            self._log_sampler_metrics(sampler_metrics, prefix=prefix)
+        for key, value in metrics.items():
+            self.logger.record(f"reward_model/eval/{prefix}{key}", value)
 
         if self.run:
             self.run.log({
-                f'reward_model/eval/{prefix}loss': metrics.get('loss'),
-                f'reward_model/eval/{prefix}accuracy': metrics.get('accuracy'),
-                **({ f'reward_model/eval/{prefix}corr_coef': metrics.get('corr_coef') } if metrics.get('corr_coef') is not None else {}),
+                **scoped_metrics,
                 'pref/num_feed': self.num_feed,
                 'pref/training_progress': self.training_progress,
             })
