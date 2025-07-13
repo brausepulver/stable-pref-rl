@@ -131,23 +131,26 @@ class PrefPPOCallback(BasePrefCallback):
         return np.mean(losses), np.mean(accuracies)
 
 
-    def _get_training_data(self):
-        end_pos = min(self.num_feed, len(self.feed_buffer))
-        segments = torch.cat([self.feed_buffer.segments[:end_pos], self.synth_buffer.segments[:end_pos]])
-        preferences = torch.cat([self.feed_buffer.preferences[:end_pos], self.synth_buffer.preferences[:end_pos]])
-        weights = torch.cat([self.feed_buffer.weights[:end_pos], self.synth_buffer.weights[:end_pos]])
-        return segments, preferences, weights
-
-
     def _train_reward_model_epoch(self):
-        segments, preferences, weights = self._get_training_data()
+        combined_items = zip(self.feed_buffer.get_current_slice(), self.synth_buffer.get_current_slice())
+        segments, preferences, weights = [torch.cat(item) for item in combined_items]
         dataset = TensorDataset(segments, preferences, weights)
+    
+        def compute_losses_for_module(module: nn.Module, module_is_ensemble: bool = False):
+            real_dataset = TensorDataset(*self.feed_buffer.get_current_slice())
+            real_metrics = self._train_module_epoch(module, real_dataset, module_is_ensemble)
+            synth_dataset = TensorDataset(*self.synth_buffer.get_current_slice())
+            synth_metrics = self._train_module_epoch(module, synth_dataset, module_is_ensemble)
+            return real_metrics, synth_metrics
 
         if not self.train_members_sequential:
-            return self._train_module_epoch(self.reward_model, dataset, module_is_ensemble=True)
+            loss, acc = self._train_module_epoch(self.reward_model, dataset, module_is_ensemble=True)
+            metrics = compute_losses_for_module(self.reward_model, True)
+            return loss, acc, metrics
 
         losses = []
         accuracies = []
+        metrics = []
 
         for index, member in enumerate(self.reward_model.members):
             if self.ensemble_disjoint_data:
@@ -159,7 +162,10 @@ class PrefPPOCallback(BasePrefCallback):
             losses.append(loss)
             accuracies.append(accuracy)
 
-        return np.mean(losses), np.mean(accuracies)
+            member_metrics = compute_losses_for_module(member)
+            metrics.append(member_metrics)
+
+        return np.mean(losses), np.mean(accuracies), metrics
 
 
     def _train_predictor(self):
@@ -169,22 +175,33 @@ class PrefPPOCallback(BasePrefCallback):
         accuracies = []
 
         for epoch in range(self.n_epochs_reward):
-            loss, accuracy = self._train_reward_model_epoch()
+            loss, accuracy, metrics = self._train_reward_model_epoch()
             losses.append(loss)
             accuracies.append(accuracy)
 
             if accuracy > self.train_acc_threshold_reward:
                 break
 
-        self.logger.record('reward_model/train/loss', np.mean(losses))
-        self.logger.record('reward_model/train/accuracy', np.mean(accuracies))
-        self.logger.record('reward_model/train/epochs', epoch + 1)
+        real_metrics, synth_metrics = zip(metrics)
+        real_loss, real_acc = np.mean(list(zip(real_metrics)))
+        synth_loss, synth_acc = np.mean(list(zip(synth_metrics)))
+
+        log_metrics = {
+            'reward_model/train/loss': np.mean(losses),
+            'reward_model/train/accuracy': np.mean(accuracies),
+            'reward_model/train/epochs': epoch + 1,
+            'reward_model/train/real_loss': real_loss,
+            'reward_model/train/real_acc': real_acc,
+            'reward_model/train/synth_loss': synth_loss,
+            'reward_model/train/synth_acc': synth_acc,
+        }
+
+        for key, value in log_metrics.items():
+            self.logger.record(key, value)
 
         if self.run:
             self.run.log({
-                'reward_model/train/loss': np.mean(losses),
-                'reward_model/train/accuracy': np.mean(accuracies),
-                'reward_model/train/epochs': epoch + 1,
+                **log_metrics,
                 'pref/num_feed': self.num_feed,
                 'pref/training_progress': self.training_progress,
             })

@@ -53,7 +53,7 @@ class FeedbackBuffer:
         self.size = 0
 
 
-    def add(self, segments: torch.Tensor, preferences: torch.Tensor, weights: torch.Tensor):
+    def add(self, segments: torch.Tensor, preferences: torch.Tensor, weights: torch.Tensor) -> int:
         """Add segments and preferences to the buffer with wraparound."""
         num_items = len(segments)
         segments = segments.to(self.device)
@@ -82,7 +82,12 @@ class FeedbackBuffer:
             
             self.position += num_items
             self.size = min(self.size + num_items, self.buffer_size)
+
         return num_items
+
+
+    def get_current_slice(self):
+        return self.segments[:self.size], self.preferences[:self.size], self.weights[:self.size],
 
 
     def clear(self):
