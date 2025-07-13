@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-N_RUNS=48
+N_RUNS=58
 
 BASE_PARAMS=(
     'hydra.run.dir=outputs/${oc.env:JOB_ID}'
