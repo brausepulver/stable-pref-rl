@@ -1,13 +1,22 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.buffers import RolloutBuffer
 from stable_baselines3.common.callbacks import CallbackList
+
 from ..callbacks.pref_ppo import PrefPPOCallback
 from ..callbacks.unsupervised import UnsupervisedCallback
 from ..utils.callbacks import get_default_callbacks
+from ..policies.shared import SharedMlpActorCriticPolicy
 
 
 class PrefPPO(PPO):
-    def __init__(self, *args, run_id: str = None, save_callback_data=False, save_episode_data=False, unsuper={}, pref={}, **kwargs):
+
+    policy_aliases = {
+        **PPO.policy_aliases,
+        "SharedMlpActorCriticPolicy": SharedMlpActorCriticPolicy
+    }
+
+
+    def __init__(self, *args, run_id: str | None = None, save_callback_data=False, save_episode_data=False, unsuper={}, pref={}, **kwargs):
         super().__init__(*args, _init_setup_model=False, **kwargs)
 
         self.run_id = run_id

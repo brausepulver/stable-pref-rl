@@ -11,7 +11,7 @@ from ..utils.model import build_layered_module
 class Discriminator(nn.Module):
     def __init__(self, input_dim, net_arch=[32, 32], activation_fn=nn.ReLU):
         super().__init__()
-        self.layers = build_layered_module(input_dim, net_arch, activation_fn)
+        self.layers = build_layered_module(input_dim, net_arch=net_arch, activation_fn=activation_fn)
 
     def forward(self, x):
         return self.layers(x)

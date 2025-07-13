@@ -19,7 +19,7 @@ class RewardModel(nn.Module):
 
 
     def _build_member(self, input_dim, net_arch=[256, 256, 256], activation_fn=nn.LeakyReLU(), output_fn=nn.Tanh()):
-        return build_layered_module(input_dim, net_arch, activation_fn, output_fn)
+        return build_layered_module(input_dim, net_arch=net_arch, activation_fn=activation_fn, output_fn=output_fn)
 
 
     def forward(self, x):

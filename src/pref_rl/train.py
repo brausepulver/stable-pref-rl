@@ -57,6 +57,9 @@ def main(cfg: DictConfig) -> None:
     if 'policy' in cfg.preset.env:
         policy = cfg.preset.env.policy
         del cfg.preset.env.policy
+    elif 'policy' in cfg.preset.method:
+        policy = cfg.preset.method.policy
+        del cfg.preset.method.policy
     else:
         policy = 'MlpPolicy'
 
