@@ -2240,6 +2240,7 @@ dependencies = [
     { name = "stable-baselines3" },
     { name = "tensorboard" },
     { name = "tqdm" },
+    { name = "wandb" },
 ]
 
 [package.optional-dependencies]
@@ -2273,6 +2274,7 @@ requires-dist = [
     { name = "stable-baselines3", specifier = ">=2.4.1" },
     { name = "tensorboard", specifier = ">=2.18.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
+    { name = "wandb", specifier = ">=0.19.4" },
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.19.4" },
 ]
 provides-extras = ["wandb", "b-pref", "direct", "notebooks"]
