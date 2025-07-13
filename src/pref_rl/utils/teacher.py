@@ -23,7 +23,7 @@ class Teacher:
 
 
     def update_thresholds(self, episodes):
-        _, gt_rewards = torch.split(torch.stack(episodes), (self.observation_size + self.action_size, 1), dim=-1)
+        _, gt_rewards = torch.split(torch.stack(episodes), [self.observation_size + self.action_size, 1], dim=-1)
         ep_lens, ep_rets = zip(*[(len(ep_rewards), sum(ep_rewards)) for ep_rewards in gt_rewards])
 
         margin = np.mean(ep_rets) * self.segment_size / np.mean(ep_lens)

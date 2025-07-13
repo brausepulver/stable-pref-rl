@@ -1,14 +1,15 @@
 from abc import ABC, abstractmethod
 import itertools
-from typing import Callable
+from typing import Callable, Optional
 
 import torch
 
 from .reward_mod import RewardModifierCallback
-from ..utils.buffers import EpisodeBuffer
+from ..config import ConstantSchedule
+from ..utils.buffers import EpisodeBuffer, FeedbackBuffer
 from ..utils.sampler import DisagreementMetric, EntropyMetric, Sampler
 from ..utils.teacher import Teacher
-from ..config import ConstantSchedule
+from ..utils.synthetic import SyntheticTeacher
 
 
 class BasePrefCallback(RewardModifierCallback, ABC):
@@ -33,6 +34,10 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         log_sampler_metrics: bool = True,
         sampler_kwargs: dict = {},
         save_episode_data: bool = False,
+        synthetic_ratio: Optional[float] = None,
+        synthetic_start_step: Optional[int] = None,
+        synthetic_stop_step: Optional[int] = None,
+        synthetic_teacher_kwargs: Optional[dict] = None,
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
@@ -53,6 +58,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.log_sampler_metrics = log_sampler_metrics
         self.sampler_kwargs = sampler_kwargs
         self.save_episode_data = save_episode_data
+        self.synthetic_ratio = synthetic_ratio or 0
+        self.synth_enabled = synthetic_ratio and synthetic_ratio > 0
+        self.synthetic_start_step = synthetic_start_step or 0
+        self.synthetic_stop_step = synthetic_stop_step or float('inf')
+        self.synthetic_teacher_kwargs = synthetic_teacher_kwargs or {}
 
         self.uniform_frac = self.sampler_kwargs.get('uniform_fraction', 0.0) if self.sampling_method != 'uniform' else 0.0
 
@@ -60,6 +70,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             raise ValueError('Either feed_batch_size or feed_schedule must be set')
         if feed_batch_size and self.feed_buf_size and self.feed_buf_size < feed_batch_size:
             raise ValueError('feed_buffer_size must be greater than or equal to feed_batch_size')
+
         self.feed_schedule = feed_schedule or ConstantSchedule(feed_batch_size)
 
         assert self.ann_buffer_size_eps is None or self.margins_stats_window_size <= self.ann_buffer_size_eps
@@ -70,7 +81,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.training_progress = 0.0
         self.keep_training = None
         self.n_steps_train_total = None
-        self.buffer_position = 0
+        self.num_synth = 0
 
         self.device = torch.device(
             device or
@@ -90,6 +101,23 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             pass
 
 
+    def _log_metrics(self, sampler_metrics: dict, prefix: str = ''):
+        for metric_name, metric_values in sampler_metrics.items():
+            metric_mean = metric_values.mean().cpu().item()
+            metric_std = metric_values.std().cpu().item()
+
+            self.logger.record(f'reward_model/{prefix}{metric_name}_mean', metric_mean)
+            self.logger.record(f'reward_model/{prefix}{metric_name}_std', metric_std)
+
+            if self.run:
+                self.run.log({
+                    f'reward_model/{prefix}{metric_name}_mean': metric_mean,
+                    f'reward_model/{prefix}{metric_name}_std': metric_std,
+                    'pref/num_feed': self.num_feed,
+                    'pref/training_progress': self.training_progress,
+                })
+
+
     def _init_callback(self):
         sampling_metrics = {
             'disagreement': DisagreementMetric,
@@ -105,8 +133,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher_str, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
-        self.segment_buffer = torch.empty((self.feed_buf_size, 2, self.segment_size, segment_dim), device=self.device).detach()
-        self.preference_buffer = torch.empty((self.feed_buf_size,), device=self.device).detach()
+        self.feed_buffer = FeedbackBuffer(self.feed_buf_size, self.segment_size, segment_dim, self.device)
+
+        if self.synth_enabled:
+            self.synth_teacher = SyntheticTeacher(self.segment_size, obs_size, act_size, **self.synthetic_teacher_kwargs)
+            self.synth_buffer = FeedbackBuffer(self.feed_buf_size, self.segment_size, segment_dim, self.device)
 
         self.total_timesteps = self.model._total_timesteps
 
@@ -120,10 +151,10 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_uniform = int(num_samples * self.uniform_frac)
         num_specific = num_samples - num_uniform
 
-        state_actions, rewards, _ = sampler.sample_segments(episodes, episode_ages, num_specific, reward_model=reward_model)
+        state_actions, rewards, _ = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model)
 
         if num_uniform > 0:
-            state_actions_uniform, rewards_uniform, _ = sampler.sample_segments(episodes, episode_ages, num_uniform, reward_model=reward_model)
+            state_actions_uniform, rewards_uniform, _ = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model)
             state_actions = torch.cat([state_actions, state_actions_uniform], dim=0)
             rewards = torch.cat([rewards, rewards_uniform], dim=1)
 
@@ -131,27 +162,33 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         return state_actions, rewards, metrics
 
 
-    def _add_to_buffer(self, state_actions, preferences, keep_indices):
-        num_items = len(keep_indices)
+    def _expand_real_data(self, sampler: Sampler, feed_batch_size: int):
+        episodes = self.buffer.get_episodes()
+        episode_ages = self.buffer.get_episode_ages()
+        num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
+        reward_model = self._get_predictor()
+
+        state_actions, rewards, sampler_metrics = self._sample_segments(sampler, episodes, episode_ages,num_samples, reward_model)
+
+        if self.log_sampler_metrics and sampler_metrics:
+            self._log_metrics(sampler_metrics, prefix='sampler/')
+
+        preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
+        weights = torch.ones_like(preferences[keep_indices])
+        num_added = self.feed_buffer.add(state_actions[keep_indices], preferences[keep_indices], weights)
+        return num_added
+
+
+    def _expand_synthetic_data(self, feed_batch_size: int):
+        episodes = self.buffer.get_episodes()
+        episode_ages = self.buffer.get_episode_ages()
+        num_samples = int(feed_batch_size * self.synthetic_ratio)
+
+        segments, preferences, metrics, weights = self.synth_teacher.generate_pairs(episodes, num_samples, self.num_timesteps)
+        self._log_metrics(metrics, prefix='synth/')
         
-        if num_items > 0:
-            start_pos = self.buffer_position % self.feed_buf_size
-            end_pos = (self.buffer_position + num_items) % self.feed_buf_size
-            
-            if start_pos < end_pos:
-                # No wraparound
-                self.segment_buffer[start_pos:end_pos] = state_actions[keep_indices].detach().to(self.device)
-                self.preference_buffer[start_pos:end_pos] = preferences.detach().to(self.device)
-            else:
-                # Wraparound
-                first_chunk = self.feed_buf_size - start_pos
-                self.segment_buffer[start_pos:] = state_actions[keep_indices[:first_chunk]].detach().to(self.device)
-                self.preference_buffer[start_pos:] = preferences[:first_chunk].detach().to(self.device)
-                if end_pos > 0:
-                    self.segment_buffer[:end_pos] = state_actions[keep_indices[first_chunk:]].detach().to(self.device)
-                    self.preference_buffer[:end_pos] = preferences[first_chunk:].detach().to(self.device)
-            
-            self.buffer_position += num_items
+        num_added = self.synth_buffer.add(segments, preferences, weights)
+        return num_added
 
 
     def _expand_data(self, sampler: Sampler):
@@ -162,42 +199,21 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             total_timesteps=self.total_timesteps
         ))
 
-        episodes = self.buffer.get_episodes()
-        episode_ages = self.buffer.get_episode_ages()
-        num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
-        reward_model = self._get_predictor()
-
-        state_actions, rewards, sampler_metrics = self._sample_segments(sampler, episodes, episode_ages, num_samples, reward_model=reward_model)
-
-        if self.log_sampler_metrics and sampler_metrics:
-            self._log_sampler_metrics(sampler_metrics, prefix='sampler/')
-
-        preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
-
-        self._add_to_buffer(state_actions, preferences, keep_indices)
-
-        self.num_feed += len(keep_indices)
+        num_added = self._expand_real_data(sampler, feed_batch_size)
+        self.num_feed += num_added
         self.training_progress = self.num_feed / self.max_feed
         self.logger.record('pref/num_feed', self.num_feed)
-        self.logger.record('pref/feed_buffer_pos', self.buffer_position)
         self.logger.record('pref/training_progress', self.training_progress)
 
+        self.logger.record('pref/feed_buffer_pos', self.feed_buffer.position)
+        self.logger.record('pref/feed_buffer_size', self.feed_buffer.size)
 
-    def _log_sampler_metrics(self, sampler_metrics: dict, prefix: str = ''):
-        for metric_name, metric_values in sampler_metrics.items():
-            metric_mean = metric_values.mean().cpu().item()
-            metric_std = metric_values.std().cpu().item()
-
-            self.logger.record(f'reward_model/{prefix}{metric_name}_mean', metric_mean)
-            self.logger.record(f'reward_model/{prefix}{metric_name}_std', metric_std)
-
-            if self.run:
-                self.run.log({
-                    f'reward_model/{prefix}{metric_name}_mean': metric_mean,
-                    f'reward_model/{prefix}{metric_name}_std': metric_std,
-                    'pref/num_feed': self.num_feed,
-                    'pref/training_progress': self.training_progress,
-                })
+        should_collect_synth = self.synthetic_start_step <= self.num_timesteps <= self.synthetic_stop_step
+        if self.synth_enabled and should_collect_synth:
+            self.num_synth += self._expand_synthetic_data(feed_batch_size)
+            self.logger.record('pref/num_synth', self.num_synth)
+            self.logger.record('pref/synth_buffer_pos', self.synth_buffer.position)
+            self.logger.record('pref/synth_buffer_size', self.synth_buffer.size)
 
 
     @abstractmethod

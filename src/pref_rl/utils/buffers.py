@@ -40,3 +40,56 @@ class EpisodeBuffer:
         if self.keep_all_eps:
             done_ages = done_ages[-self.n_episodes:]
         return done_ages + running_ages
+
+
+class FeedbackBuffer:
+    def __init__(self, buffer_size: int, segment_size: int, segment_dimension: int, device: torch.device):
+        self.buffer_size = buffer_size
+        self.device = device
+        self.segments = torch.empty((buffer_size, 2, segment_size, segment_dimension), device=device).detach()
+        self.preferences = torch.empty((buffer_size,), device=device).detach()
+        self.weights = torch.empty((buffer_size,), device=device).detach()
+        self.position = 0
+        self.size = 0
+
+
+    def add(self, segments: torch.Tensor, preferences: torch.Tensor, weights: torch.Tensor):
+        """Add segments and preferences to the buffer with wraparound."""
+        num_items = len(segments)
+        segments = segments.to(self.device)
+        preferences = preferences.to(self.device)
+        weights = weights.to(self.device)
+        
+        if num_items > 0:
+            start_pos = self.position % self.buffer_size
+            end_pos = (self.position + num_items) % self.buffer_size
+            
+            if start_pos < end_pos:
+                # No wraparound
+                self.segments[start_pos:end_pos] = segments.detach()
+                self.preferences[start_pos:end_pos] = preferences.detach()
+                self.weights[start_pos:end_pos] = weights.detach()
+            else:
+                # Wraparound
+                first_chunk = self.buffer_size - start_pos
+                self.segments[start_pos:] = segments[:first_chunk].detach()
+                self.preferences[start_pos:] = preferences[:first_chunk].detach()
+                self.weights[start_pos:] = weights[:first_chunk].detach()
+                if end_pos > 0:
+                    self.segments[:end_pos] = segments[first_chunk:].detach()
+                    self.preferences[:end_pos] = preferences[first_chunk:].detach()
+                    self.weights[:end_pos] = weights[first_chunk:].detach()
+            
+            self.position += num_items
+            self.size = min(self.size + num_items, self.buffer_size)
+        return num_items
+
+
+    def clear(self):
+        """Clear the buffer."""
+        self.position = 0
+        self.size = 0
+
+
+    def __len__(self):
+        return self.size

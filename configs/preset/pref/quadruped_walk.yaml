@@ -27,3 +27,11 @@ method:
     n_steps_eval_current: 32_000
     validate_on_held_out: true
     held_out_data_path: data/validation_data.pkl
+
+    synthetic_ratio: 0.0
+    synthetic_teacher_kwargs:
+      limit_old_recent_steps: 100000
+      limit_new_recent_steps: 50000
+      weight_scheme: 'constant'
+      max_weight: 0.5
+      sampling_method: 'uniform'

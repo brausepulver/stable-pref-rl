@@ -135,7 +135,7 @@ class Sampler:
         return torch.stack(segments)
 
 
-    def _sample_random_segments(self, episodes: list, num_samples: int, stratified: bool = False):
+    def sample_segments(self, episodes: list, num_samples: int, stratified: bool = False):
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
         if len(valid_episodes) == 0:
             raise NoValidEpisodesError('No valid episodes to sample from')
@@ -143,13 +143,9 @@ class Sampler:
         ep_indices = self._get_episode_indices(valid_episodes, num_samples, stratified)
         segments = self._get_segments(valid_episodes, ep_indices)
         
-        obs, act, gt_rewards = torch.split(segments, (self.observation_size, self.action_size, 1), dim=-1)
+        obs, act, gt_rewards = torch.split(segments, [self.observation_size, self.action_size, 1], dim=-1)
         state_actions = torch.cat([obs, act], dim=-1)
-
-        state_action_pairs = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
-        reward_pairs = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
-
-        return ep_indices, state_action_pairs, reward_pairs
+        return ep_indices, state_actions, gt_rewards
 
 
     def compute_logging_metrics(self, state_action_pairs, reward_model, **schedule_kwargs):
@@ -172,12 +168,15 @@ class Sampler:
         return metrics
 
 
-    def sample_segments(self, episodes: list, episode_ages: list, num_samples: int, stratified: bool = False,
+    def sample_pairs(self, episodes: list, episode_ages: list, num_samples: int, stratified: bool = False,
                         reward_model: Optional[Callable] = None, compute_uniform_metrics: bool = True, **schedule_kwargs):
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
-        ep_indices, state_action_pairs, reward_pairs = self._sample_random_segments(episodes, num_samples_expanded, stratified)
+        ep_indices, state_actions, gt_rewards = self.sample_segments(episodes, num_samples_expanded, stratified)
+
+        state_action_pairs = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
+        reward_pairs = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
 
         if method != 'uniform' or compute_uniform_metrics:
             metrics = self.compute_logging_metrics(state_action_pairs, reward_model, **schedule_kwargs)

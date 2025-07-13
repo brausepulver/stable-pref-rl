@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from typing import Callable
+from typing import Callable, Optional
 
 from .pref import BasePrefCallback
 from ..utils.model import build_layered_module
@@ -78,7 +78,6 @@ class PrefPPOCallback(BasePrefCallback):
 
         obs_size, act_size = self._get_input_sizes()
         self.reward_model = RewardModel(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
-        self.bce_loss = nn.BCEWithLogitsLoss()
 
         if self.train_members_sequential:
             optim_params = [member.parameters() for member in self.reward_model.members]
@@ -97,27 +96,17 @@ class PrefPPOCallback(BasePrefCallback):
         return self.reward_model
 
 
-    def _calculate_accuracy(self, pred_returns: torch.Tensor, preferences: torch.Tensor):
-        pred_preferences = torch.argmax(pred_returns, dim=-1)
-        correct = (pred_preferences == preferences).float()
-        return correct.mean().item()
-
-
-    def _calculate_loss(self, pred_rewards: torch.Tensor, preferences: torch.Tensor):
+    def _compute_loss(self, pred_rewards: torch.Tensor, preferences: torch.Tensor, weight: Optional[torch.Tensor] = None):
         pred_returns = einops.reduce(pred_rewards, '... batch pair segment 1 -> ... batch pair', 'sum')
         inputs = pred_returns[..., 1] - pred_returns[..., 0]
-        loss = self.bce_loss(inputs, preferences)
-        accuracy = self._calculate_accuracy(pred_returns, preferences)
+        criterion = nn.BCEWithLogitsLoss(weight=weight)
+        loss = criterion(inputs, preferences)
+
+        pred_preferences = torch.argmax(pred_returns, dim=-1)
+        correct = (pred_preferences == preferences).float()
+        accuracy = correct.mean().item()
+
         return loss, accuracy
-
-
-    def _predict_and_compute_loss(self, module: nn.Module, segments: torch.Tensor, preferences: torch.Tensor, module_is_ensemble: bool = False):
-        segments = segments.to(self.device)
-        preferences = preferences.to(self.device)
-        pred_rewards = module(segments)
-        if module_is_ensemble:
-            pred_rewards = self.ensemble_agg_fn(pred_rewards)
-        return self._calculate_loss(pred_rewards, preferences)
 
 
     def _train_module_epoch(self, module: nn.Module, dataset: TensorDataset, module_is_ensemble: bool = False):
@@ -125,10 +114,14 @@ class PrefPPOCallback(BasePrefCallback):
         losses = []
         accuracies = []
 
-        for segments, preferences in dataloader:
+        for segments, preferences, weights in dataloader:
             self.rew_optimizer.zero_grad()
 
-            loss, accuracy = self._predict_and_compute_loss(module, segments, preferences, module_is_ensemble)
+            pred_rewards = module(segments)
+            if module_is_ensemble:
+                pred_rewards = self.ensemble_agg_fn(pred_rewards)
+
+            loss, accuracy = self._compute_loss(pred_rewards, preferences, weights)
             loss.backward()
             self.rew_optimizer.step()
 
@@ -138,10 +131,17 @@ class PrefPPOCallback(BasePrefCallback):
         return np.mean(losses), np.mean(accuracies)
 
 
+    def _get_training_data(self):
+        end_pos = min(self.num_feed, len(self.feed_buffer))
+        segments = torch.cat([self.feed_buffer.segments[:end_pos], self.synth_buffer.segments[:end_pos]])
+        preferences = torch.cat([self.feed_buffer.preferences[:end_pos], self.synth_buffer.preferences[:end_pos]])
+        weights = torch.cat([self.feed_buffer.weights[:end_pos], self.synth_buffer.weights[:end_pos]])
+        return segments, preferences, weights
+
+
     def _train_reward_model_epoch(self):
-        segments = self.segment_buffer[:self.num_feed]
-        preferences = self.preference_buffer[:self.num_feed]
-        dataset = TensorDataset(segments, preferences)
+        segments, preferences, weights = self._get_training_data()
+        dataset = TensorDataset(segments, preferences, weights)
 
         if not self.train_members_sequential:
             return self._train_module_epoch(self.reward_model, dataset, module_is_ensemble=True)
@@ -153,7 +153,7 @@ class PrefPPOCallback(BasePrefCallback):
             if self.ensemble_disjoint_data:
                 step = len(self.reward_model.members)
                 idx = torch.arange(index, self.num_feed, step, device=segments.device)
-                dataset = TensorDataset(segments[idx], preferences[idx])
+                dataset = TensorDataset(segments[idx], preferences[idx], weights[idx])
             
             loss, accuracy = self._train_module_epoch(member, dataset)
             losses.append(loss)
@@ -218,7 +218,7 @@ class PrefPPOCallback(BasePrefCallback):
         
         member_metrics = []
         for member_pred in ensemble_preds:
-            loss, accuracy = self._calculate_loss(member_pred, preferences)
+            loss, accuracy = self._compute_loss(member_pred, preferences)
             member_returns = einops.reduce(member_pred, 'batch pair segment 1 -> batch pair', 'sum')
             calibration = self._calculate_calibration_metrics(member_returns, preferences)
             
@@ -229,7 +229,7 @@ class PrefPPOCallback(BasePrefCallback):
             })
         
         ensemble_pred = self.ensemble_agg_fn(ensemble_preds)
-        loss, accuracy = self._calculate_loss(ensemble_pred, preferences)
+        loss, accuracy = self._compute_loss(ensemble_pred, preferences)
         ensemble_returns = einops.reduce(ensemble_pred, 'batch pair segment 1 -> batch pair', 'sum')
         calibration = self._calculate_calibration_metrics(ensemble_returns, preferences)
 
@@ -311,7 +311,7 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_on_episodes(self, episodes, episode_ages, size: int, compute_correlation: bool = False, compute_sampler_metrics: bool = True):
-        segments, rewards, sampler_metrics = self.sampler.sample_segments(episodes, episode_ages, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics)
+        segments, rewards, sampler_metrics = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
         return {
             **self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation),
@@ -323,7 +323,7 @@ class PrefPPOCallback(BasePrefCallback):
         scoped_metrics = {f'reward_model/eval/{prefix}{key}': value for key, value in metrics.items() if value is not None}
 
         if self.log_sampler_metrics and metrics.get('sampler_metrics') is not None:
-            self._log_sampler_metrics(metrics.pop('sampler_metrics'), prefix=prefix)
+            self._log_metrics(metrics.pop('sampler_metrics'), prefix=prefix)
 
         for key, value in metrics.items():
             self.logger.record(f"reward_model/eval/{prefix}{key}", value)

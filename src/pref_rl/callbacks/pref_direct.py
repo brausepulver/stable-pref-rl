@@ -1,8 +1,11 @@
+from typing import Optional
+
 import einops
 import torch
 import torch.nn as nn
 import numpy as np
 from torch.utils.data import TensorDataset, DataLoader
+
 from .pref import BasePrefCallback
 from ..utils.model import build_layered_module
 
@@ -55,9 +58,14 @@ class PrefDIRECTCallback(BasePrefCallback):
 
 
     def _expand_data(self, sampling_method: str):
-        num_samples = min(self.feed_batch_size, self.max_feed - self.num_feed)
-        state_actions, rewards = self.sampler.sample_segments(self.buffer.get_episodes(), num_samples, sampling_method, self._get_predictor())
+        progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
+        feed_batch_size = int(self.feed_schedule(
+            progress_remaining,
+            num_timesteps=self.num_timesteps,
+            total_timesteps=self.total_timesteps
+        ))
 
+        state_actions, rewards, _ = self.sampler.sample_pairs(self.buffer.get_episodes(), feed_batch_size, sampling_method, self._get_predictor())
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
 
         self.segment_buffer = torch.cat([self.segment_buffer, state_actions[keep_indices].detach().to(self.device)])[-self.pref_buffer_size_seg:]
@@ -75,16 +83,16 @@ class PrefDIRECTCallback(BasePrefCallback):
         return steps
 
 
-    def _get_positive_samples(self, size: int = None):
+    def _get_positive_samples(self, size: Optional[int] = None):
         steps = self._get_steps_from_preferences(self.preference_buffer == 1)
         indices = torch.randperm(len(steps), device=self.device)[:size]
         return steps[indices]
 
 
-    def _get_negative_samples(self, size: int = None):
+    def _get_negative_samples(self, size: int):
         obs_size, act_size = self._get_input_sizes()
         recent_steps = torch.cat(list(self.buffer.get_episodes()))[-size:].to(self.device)
-        steps, _ = torch.split(recent_steps, (obs_size + act_size, 1), dim=-1)
+        steps, _ = torch.split(recent_steps, [obs_size + act_size, 1], dim=-1)
         return steps
 
 
