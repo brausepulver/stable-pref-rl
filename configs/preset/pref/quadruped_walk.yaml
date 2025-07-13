@@ -8,7 +8,7 @@ method:
     max_feed: 2_000
     feed_batch_size: 200
 
-    sampler: uniform
+    sampler: disagreement
     sampler_kwargs:
       uniform_fraction: 0.0
 

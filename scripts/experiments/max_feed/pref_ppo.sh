@@ -1,36 +1,66 @@
 #!/usr/bin/env bash
 
+N_RUNS=48
+
 BASE_PARAMS=(
+    'hydra.run.dir=outputs/${oc.env:JOB_ID}'
     "preset=pref_ppo/quadruped_walk"
     "training.total_timesteps=2000000"
     "preset.method.clip_range.end=0.2"
-    "training.num_envs=16"
-    "preset.env.limit_ep_steps=1000"
-    "preset.method.unsuper.n_steps_unsuper=32000"
-    "preset.method.pref.n_steps_reward=32000"
-    "preset.method.pref.teacher=oracle"
-    "preset.method.pref.device=cpu"
 )
 
-for sampler in uniform disagreement entropy; do
-    echo "Running experiments with sampler=${sampler}"
+# Uniform sampling
+for max_feed in 1000 3000 4000 5000 6000
+do
+    for i in $(seq 1 $N_RUNS); do
+        seed=$((1000 * i))
 
-    for max_feed in 500 1000 1500 2000 3000 4000 5000; do
-        echo "Running experiments with max_feed=${max_feed}"
-
-        for i in $(seq 1 8); do
-            seed=$((1000 * i))
-
-            train \
-                ${BASE_PARAMS[@]} \
-                training.seed=$seed \
-                "preset.method.pref.n_steps_reward=32000" \
-                "preset.method.pref.max_feed=${max_feed}" \
-                "preset.method.pref.feed_batch_size=200" \
-                "preset.method.pref.sampler=${sampler}" \
-                "logging.tags=[pref_ppo, experiment, ${sampler}, max_feed]" \
-                "logging.group=pref_ppo/max_feed/${sampler}/${max_feed}" &
-        done
-        wait
+        outb stage uv run train \
+            ${BASE_PARAMS[@]} \
+            training.seed=$seed \
+            "preset.method.pref.sampler=uniform" \
+            "preset.method.pref.n_steps_reward=32000" \
+            "preset.method.pref.feed_batch_size=200" \
+            "preset.method.pref.max_feed=${max_feed}" \
+            "logging.tags=[pref_ppo, experiment, uniform, max_feed]" \
+            "logging.group=pref_ppo/max_feed/uniform/${max_feed}"
     done
+    wait
+done
+
+# Disagreement sampling
+for max_feed in 1000 3000 4000 5000 6000; do
+    for i in $(seq 1 $N_RUNS); do
+        seed=$((1000 * i))
+
+        outb stage uv run train \
+            ${BASE_PARAMS[@]} \
+            training.seed=$seed \
+            "preset.method.pref.sampler=disagreement" \
+            "preset.method.pref.n_steps_reward=32000" \
+            "preset.method.pref.feed_batch_size=200" \
+            "preset.method.pref.max_feed=${max_feed}" \
+            "logging.tags=[pref_ppo, experiment, disagreement, max_feed]" \
+            "logging.group=pref_ppo/max_feed/disagreement/${max_feed}"
+    done
+    wait
+done
+
+# Entropy sampling
+for max_feed in 1000 3000 4000 5000 6000
+do
+    for i in $(seq 1 $N_RUNS); do
+        seed=$((1000 * i))
+
+        outb stage uv run train \
+            ${BASE_PARAMS[@]} \
+            training.seed=$seed \
+            "preset.method.pref.sampler=entropy" \
+            "preset.method.pref.n_steps_reward=32000" \
+            "preset.method.pref.feed_batch_size=200" \
+            "preset.method.pref.max_feed=${max_feed}" \
+            "logging.tags=[pref_ppo, experiment, entropy, max_feed]" \
+            "logging.group=pref_ppo/max_feed/entropy/${max_feed}"
+    done
+    wait
 done

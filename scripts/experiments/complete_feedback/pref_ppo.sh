@@ -1,43 +1,46 @@
 #!/usr/bin/env bash
 
+N_RUNS=48
+
 BASE_PARAMS=(
+    'hydra.run.dir=outputs/${oc.env:JOB_ID}'
     "preset=pref_ppo/quadruped_walk"
     "training.total_timesteps=2000000"
     "preset.method.clip_range.end=0.2"
-    "training.num_envs=16"
-    "preset.env.limit_ep_steps=1000"
-    "preset.method.unsuper.n_steps_unsuper=32000"
-    "preset.method.pref.max_feed=2000"
-    "preset.method.pref.teacher=oracle"
-    "preset.method.pref.device=cpu"
     "preset.method.pref.sampler=uniform"
     "preset.method.pref.n_steps_reward=16000"
-    "preset.method.pref.max_feed=999999"
     "preset.method.pref.ann_buffer_size_eps=16"
-    "preset.method.pref.n_epochs_reward=1"
-    "preset.method.pref.train_acc_threshold_reward=0"
+    "+preset.method.pref.margins_stats_window_size=16"
+    "preset.method.pref.max_feed=999999"
+    "logging.tags=[pref_ppo,experiment,uniform,complete_feed]"
 )
 
-for i in $(seq 1 8); do
-    seed=$((1000 * i))
-    echo "Running PrefPPO on approx. half of all feedback with seed ${seed}"
-    train \
-        ${BASE_PARAMS[@]} \
-        training.seed=$seed \
-        "preset.method.pref.feed_batch_size=800" \
-        'logging.tags=[pref_ppo, experiment, uniform, complete_feedback]' \
-        "logging.group=pref_ppo/complete_feedback/0.5" &
+# Fixed accuracy threshold
+for feed_batch_size in 200 400 800 1600; do
+    for i in $(seq 1 $N_RUNS); do
+        seed=$((1000 * i))
+        outb stage \
+            uv run train \
+                ${BASE_PARAMS[@]} \
+                training.seed=$seed \
+                "preset.method.pref.feed_batch_size=${feed_batch_size}" \
+                "+preset.method.pref.feed_buffer_size=${feed_batch_size}" \
+                "logging.group=pref_ppo/complete_feed/acc/${feed_batch_size}"
+    done
 done
-wait
 
-for i in $(seq 1 8); do
-    seed=$((1000 * i))
-    echo "Running PrefPPO on approx. all feedback with seed ${seed}"
-    train \
-        ${BASE_PARAMS[@]} \
-        training.seed=$seed \
-        "preset.method.pref.feed_batch_size=1600" \
-        'logging.tags=[pref_ppo, experiment, uniform, complete_feedback]' \
-        "logging.group=pref_ppo/complete_feedback/1.0" &
+# Fixed epochs
+for feed_batch_size in 200 400 800 1600; do
+    for i in $(seq 1 $N_RUNS); do
+        seed=$((1000 * i))
+        outb stage \
+            uv run train \
+                ${BASE_PARAMS[@]} \
+                training.seed=$seed \
+                "preset.method.pref.feed_batch_size=${feed_batch_size}" \
+                "+preset.method.pref.feed_buffer_size=${feed_batch_size}" \
+                "preset.method.pref.n_epochs_reward=1" \
+                "preset.method.pref.train_acc_threshold_reward=1" \
+                "logging.group=pref_ppo/complete_feed/epochs/${feed_batch_size}"
+    done
 done
-wait
