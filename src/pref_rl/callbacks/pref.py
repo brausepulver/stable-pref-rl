@@ -34,10 +34,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         log_sampler_metrics: bool = True,
         sampler_kwargs: dict = {},
         save_episode_data: bool = False,
-        synthetic_ratio: Optional[float] = None,
-        synthetic_start_step: Optional[int] = None,
-        synthetic_stop_step: Optional[int] = None,
-        synthetic_teacher_kwargs: Optional[dict] = None,
+        synth_ratio: Optional[float] = None,
+        synth_start_step: Optional[int] = None,
+        synth_stop_step: Optional[int] = None,
+        synth_buffer_size: int | None = None,
+        synth_teacher_kwargs: Optional[dict] = None,
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
@@ -58,11 +59,15 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.log_sampler_metrics = log_sampler_metrics
         self.sampler_kwargs = sampler_kwargs
         self.save_episode_data = save_episode_data
-        self.synthetic_ratio = synthetic_ratio or 0
-        self.synth_enabled = synthetic_ratio and synthetic_ratio > 0
-        self.synthetic_start_step = synthetic_start_step or 0
-        self.synthetic_stop_step = synthetic_stop_step or float('inf')
-        self.synthetic_teacher_kwargs = synthetic_teacher_kwargs or {}
+        self.synth_ratio = synth_ratio or 0
+        self.synth_enabled = synth_ratio and synth_ratio > 0
+        self.synth_start_step = synth_start_step or 0
+        self.synth_stop_step = synth_stop_step or float('inf')
+        self.synth_buffer_size = synth_buffer_size
+        self.synth_teacher_kwargs = synth_teacher_kwargs or {}
+
+        if self.synth_enabled and not self.synth_buffer_size:
+            raise ValueError('synth_buffer_size must be provided if synth_ratio is set')
 
         self.uniform_frac = self.sampler_kwargs.get('uniform_fraction', 0.0) if self.sampling_method != 'uniform' else 0.0
 
@@ -136,8 +141,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.feed_buffer = FeedbackBuffer(self.feed_buf_size, self.segment_size, segment_dim, self.device)
 
         if self.synth_enabled:
-            self.synth_teacher = SyntheticTeacher(self.segment_size, obs_size, act_size, **self.synthetic_teacher_kwargs)
-            self.synth_buffer = FeedbackBuffer(self.feed_buf_size, self.segment_size, segment_dim, self.device)
+            self.synth_teacher = SyntheticTeacher(self.segment_size, obs_size, act_size, **self.synth_teacher_kwargs)
+            self.synth_buffer = FeedbackBuffer(self.synth_buffer_size, self.segment_size, segment_dim, self.device)
 
         self.total_timesteps = self.model._total_timesteps
 
@@ -179,10 +184,10 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         return num_added
 
 
-    def _expand_synthetic_data(self, feed_batch_size: int):
+    def _expand_synth_data(self, feed_batch_size: int):
         episodes = self.buffer.get_episodes()
         episode_ages = self.buffer.get_episode_ages()
-        num_samples = int(feed_batch_size * self.synthetic_ratio)
+        num_samples = int(feed_batch_size * self.synth_ratio)
 
         segments, preferences, metrics, weights = self.synth_teacher.generate_pairs(episodes, num_samples, self.num_timesteps)
         self._log_metrics(metrics, prefix='synth/')
@@ -208,9 +213,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.logger.record('pref/feed_buffer_pos', self.feed_buffer.position)
         self.logger.record('pref/feed_buffer_size', self.feed_buffer.size)
 
-        should_collect_synth = self.synthetic_start_step <= self.num_timesteps <= self.synthetic_stop_step
+        should_collect_synth = self.synth_start_step <= self.num_timesteps <= self.synth_stop_step
         if self.synth_enabled and should_collect_synth:
-            self.num_synth += self._expand_synthetic_data(feed_batch_size)
+            self.num_synth += self._expand_synth_data(feed_batch_size)
             self.logger.record('pref/num_synth', self.num_synth)
             self.logger.record('pref/synth_buffer_pos', self.synth_buffer.position)
             self.logger.record('pref/synth_buffer_size', self.synth_buffer.size)

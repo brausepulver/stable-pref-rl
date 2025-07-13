@@ -28,8 +28,11 @@ method:
     validate_on_held_out: true
     held_out_data_path: data/validation_data.pkl
 
-    synthetic_ratio: 0.0
-    synthetic_teacher_kwargs:
+    synth_ratio: 0.0
+    synth_start_step: 0
+    synth_stop_step: 1_000_000
+    synth_buffer_size: 100_000
+    synth_teacher_kwargs:
       limit_old_recent_steps: 100000
       limit_new_recent_steps: 50000
       weight_scheme: 'constant'
