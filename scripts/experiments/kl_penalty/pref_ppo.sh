@@ -16,7 +16,7 @@ for kl_penalty_coef in 0.01 0.05 0.1 0.2; do
         outb stage uv run train \
             ${BASE_PARAMS[@]} \
             training.seed=$seed \
-            "preset.method.kl_penalty_coef=${kl_penalty_coef}" \
+            "+preset.method.kl_penalty_coef=${kl_penalty_coef}" \
             "logging.tags=[pref_ppo, experiment, disagreement, kl_penalty]" \
             "logging.group=pref_ppo/kl_penalty/disagreement/${kl_penalty_coef}"
     done
