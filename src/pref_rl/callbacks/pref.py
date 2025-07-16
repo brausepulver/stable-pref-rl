@@ -208,6 +208,18 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
+    def _should_train(self):
+        should_first_train = not self.has_trained and self.n_steps_first_train is not None and self.steps_since_train >= self.n_steps_first_train
+        should_train = self.has_trained and self.steps_since_train >= self.n_steps_reward
+        return should_first_train or should_train
+
+
+    def _is_done_training(self):
+        should_stop_training = self.n_steps_last_train is not None and self.num_timesteps >= self.n_steps_last_train
+        feedback_left = self.num_feed < self.max_feed
+        return should_stop_training or (not feedback_left and not self.keep_training)
+
+
     def _on_step(self):
         self.steps_since_train += self.training_env.num_envs
 
@@ -225,12 +237,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         if self.n_steps_first_train is None and buffer_has_done:
             self.n_steps_first_train = self.num_timesteps
 
-        should_first_train = not self.has_trained and self.n_steps_first_train is not None and self.steps_since_train >= self.n_steps_first_train
-        should_train = self.has_trained and self.steps_since_train >= self.n_steps_reward
         feedback_left = self.num_feed < self.max_feed
-        should_stop_training = self.n_steps_last_train is not None and self.num_timesteps >= self.n_steps_last_train
 
-        if (should_first_train or should_train) and (feedback_left or self.keep_training) and not should_stop_training:
+        if self._should_train() and not self._is_done_training():
             sampling_method = self.sampling_method if self.has_trained else 'uniform'
             if feedback_left:
                 self._expand_data(sampling_method)

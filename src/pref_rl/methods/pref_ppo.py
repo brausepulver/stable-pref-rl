@@ -4,6 +4,7 @@ from stable_baselines3.common.callbacks import CallbackList
 
 from ..callbacks.pref_ppo import PrefPPOCallback
 from ..callbacks.unsupervised import UnsupervisedCallback
+from ..callbacks.kl_penalty import KLPenaltyCallback
 from ..utils.callbacks import get_default_callbacks
 from ..policies.shared import SharedMlpActorCriticPolicy
 
@@ -16,7 +17,7 @@ class PrefPPO(PPO):
     }
 
 
-    def __init__(self, *args, run_id: str | None = None, save_callback_data=False, save_episode_data=False, unsuper={}, pref={}, **kwargs):
+    def __init__(self, *args, run_id: str | None = None, save_callback_data=False, save_episode_data=False, unsuper={}, pref={}, kl_penalty_coef: float = 0.0, **kwargs):
         super().__init__(*args, _init_setup_model=False, **kwargs)
 
         self.run_id = run_id
@@ -48,6 +49,7 @@ class PrefPPO(PPO):
         self.callbacks = [
             self.pref_ppo_callback,
             *([self.unsupervised_callback] if self.unsupervised_callback is not None else []),
+            *([KLPenaltyCallback(self.pref_ppo_callback, kl_penalty_coef)] if kl_penalty_coef > 0 else []),
             get_default_callbacks()
         ]
 
