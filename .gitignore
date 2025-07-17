@@ -1,10 +1,12 @@
 .claude/
 .vscode/
-.out/
-.outbound/
+.out/*
+.outbound/*
 .env
 .outignore
 .outboundignore
+
+!.outbound/setup.sh
 
 .env/
 env/
