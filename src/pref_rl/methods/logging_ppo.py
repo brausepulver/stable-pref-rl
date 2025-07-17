@@ -4,7 +4,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.type_aliases import GymEnv
 
-from ..utils.pref import EpisodeBuffer
+from ..utils.buffers import EpisodeBuffer
 
 
 class _EpisodeRecorderCallback(BaseCallback):

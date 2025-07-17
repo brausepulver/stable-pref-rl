@@ -9,7 +9,8 @@ from typing import Callable
 
 from .pref import BasePrefCallback
 from ..utils.model import build_layered_module
-from ..utils.pref import NoValidEpisodesError, Teacher
+from ..utils.sampler import NoValidEpisodesError
+from ..utils.teacher import Teacher
 
 
 class RewardModel(nn.Module):
@@ -310,7 +311,7 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = False, compute_sampler_metrics: bool = True):
-        segments, rewards, sampler_metrics = self.sampler.sample_segments(episodes, size, 'uniform', self.reward_model, compute_uniform_metrics=compute_sampler_metrics)
+        segments, rewards, sampler_metrics = self.sampler.sample_segments(episodes, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
         return {
             **self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation),
@@ -359,7 +360,7 @@ class PrefPPOCallback(BasePrefCallback):
             """)
         segments, rewards = torch.load(path)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
-        sampler_metrics = self.sampler.compute_metrics(segments, self.reward_model)
+        sampler_metrics = self.sampler._compute_metrics(segments, self.reward_model)
 
         metrics = self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences)
         self._log_validation_metrics({**metrics, 'sampler_metrics': sampler_metrics}, prefix='held_out/')

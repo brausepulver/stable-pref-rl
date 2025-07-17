@@ -5,7 +5,9 @@ from typing import Callable
 import torch
 
 from .reward_mod import RewardModifierCallback
-from ..utils.pref import EpisodeBuffer, Teacher, Sampler
+from ..utils.buffers import EpisodeBuffer
+from ..utils.sampler import DisagreementMetric, EntropyMetric, Sampler
+from ..utils.teacher import Teacher
 from ..config import ConstantSchedule
 
 
@@ -52,6 +54,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.sampler_kwargs = sampler_kwargs
         self.save_episode_data = save_episode_data
 
+        self.uniform_frac = self.sampler_kwargs.get('uniform_fraction', 0.0) if self.sampling_method != 'uniform' else 0.0
+
         if not feed_schedule and not feed_batch_size:
             raise ValueError('Either feed_batch_size or feed_schedule must be set')
         if feed_batch_size and self.feed_buf_size and self.feed_buf_size < feed_batch_size:
@@ -87,9 +91,18 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _init_callback(self):
+        sampling_metrics = {
+            'disagreement': DisagreementMetric,
+            'entropy': EntropyMetric,
+        }
+        sampling_metric_cls = sampling_metrics.get(self.sampling_method, None)
+        sampling_metric = sampling_metric_cls() if sampling_metric_cls else None
+
         obs_size, act_size = self._get_input_sizes()
         self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps, keep_all_eps=self.save_episode_data)
-        self.sampler = Sampler(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size)
+        self.sampler = Sampler(self.segment_size, obs_size, act_size, sampling_metric)
+        if self.uniform_frac > 0:
+            self.uniform_sampler = Sampler(self.segment_size, obs_size, act_size)
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher_str, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
@@ -104,29 +117,18 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
-    def _sample_segments(self, episodes, num_samples, sampling_method, reward_model):
-        uniform_frac = self.sampler_kwargs.get('uniform_fraction', 0.0) if sampling_method != 'uniform' else 0.0
-        num_uniform = int(num_samples * uniform_frac)
+    def _sample_segments(self, episodes, num_samples, reward_model):
+        num_uniform = int(num_samples * self.uniform_frac)
         num_specific = num_samples - num_uniform
 
-        state_actions, rewards, _ = self.sampler.sample_segments(
-            episodes,
-            num_specific,
-            sampling_method,
-            reward_model,
-        )
+        state_actions, rewards, _ = self.sampler.sample_segments(episodes, num_specific, reward_model)
 
         if num_uniform > 0:
-            state_actions_uniform, rewards_uniform, _ = self.sampler.sample_segments(
-                episodes,
-                num_uniform,
-                'uniform',
-                reward_model,
-            )
+            state_actions_uniform, rewards_uniform, _ = self.sampler.sample_segments(episodes, num_uniform, reward_model)
             state_actions = torch.cat([state_actions, state_actions_uniform], dim=0)
             rewards = torch.cat([rewards, rewards_uniform], dim=1)
 
-        metrics = self.sampler.compute_metrics(state_actions, reward_model) if self.log_sampler_metrics else {}
+        metrics = self.sampler.compute_logging_metrics(state_actions, reward_model) if self.log_sampler_metrics else {}
         return state_actions, rewards, metrics
 
 
@@ -165,12 +167,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
         reward_model = self._get_predictor()
 
-        state_actions, rewards, sampler_metrics = self._sample_segments(
-            episodes,
-            num_samples,
-            sampling_method,
-            reward_model
-        )
+        state_actions, rewards, sampler_metrics = self._sample_segments(episodes, num_samples, reward_model)
 
         if self.log_sampler_metrics and sampler_metrics:
             self._log_sampler_metrics(sampler_metrics, prefix='sampler/')
