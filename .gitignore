@@ -1,7 +1,8 @@
 .claude/
 .vscode/
-.out/
-.outbound/
+.out/*
+.outbound/*
+!.outbound/setup.sh
 .env
 .outignore
 .outboundignore
