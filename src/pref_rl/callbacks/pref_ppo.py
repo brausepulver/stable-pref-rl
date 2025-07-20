@@ -310,8 +310,8 @@ class PrefPPOCallback(BasePrefCallback):
         return results
 
 
-    def _validate_on_episodes(self, episodes, size: int, compute_correlation: bool = False, compute_sampler_metrics: bool = True):
-        segments, rewards, sampler_metrics = self.sampler.sample_segments(episodes, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics)
+    def _validate_on_episodes(self, episodes, episode_ages, size: int, compute_correlation: bool = False, compute_sampler_metrics: bool = True):
+        segments, rewards, sampler_metrics = self.sampler.sample_segments(episodes, episode_ages, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
         return {
             **self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation),
@@ -337,15 +337,16 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_train(self):
-        metrics = self._validate_on_episodes(self.buffer.get_episodes(), len(self.segment_buffer))
+        metrics = self._validate_on_episodes(self.buffer.get_episodes(), self.buffer.get_episode_ages(), len(self.segment_buffer))
         self._log_validation_metrics(metrics)
 
 
     def _validate_current(self):
         episodes = self.buffer.get_episodes()[-self.done_eps_since_eval:]
+        episode_ages = self.buffer.get_episode_ages()[-self.done_eps_since_eval:]
         self.done_eps_since_eval = 0
         try:
-            metrics = self._validate_on_episodes(episodes, int(0.5 * sum(len(ep) for ep in episodes) / self.segment_size))
+            metrics = self._validate_on_episodes(episodes, episode_ages, int(0.5 * sum(len(ep) for ep in episodes) / self.segment_size))
             self._log_validation_metrics(metrics, prefix='current/')
         except NoValidEpisodesError:
             return
@@ -360,7 +361,7 @@ class PrefPPOCallback(BasePrefCallback):
             """)
         segments, rewards = torch.load(path)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
-        sampler_metrics = self.sampler._compute_metrics(segments, self.reward_model)
+        sampler_metrics = self.sampler.compute_logging_metrics(segments, self.reward_model)
 
         metrics = self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences)
         self._log_validation_metrics({**metrics, 'sampler_metrics': sampler_metrics}, prefix='held_out/')

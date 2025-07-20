@@ -146,15 +146,15 @@ class Sampler:
         obs, act, gt_rewards = torch.split(segments, (self.observation_size, self.action_size, 1), dim=-1)
         state_actions = torch.cat([obs, act], dim=-1)
 
-        split_state_actions = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
-        split_rewards = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
+        state_action_pairs = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
+        reward_pairs = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
 
-        return split_state_actions, split_rewards
+        return ep_indices, state_action_pairs, reward_pairs
 
 
-    def compute_logging_metrics(self, split_state_actions, reward_model, **schedule_kwargs):
+    def compute_logging_metrics(self, state_action_pairs, reward_model, **schedule_kwargs):
         metrics = {
-            metric_name: metric.compute(split_state_actions, reward_model, **schedule_kwargs)
+            metric_name: metric.compute(state_action_pairs, reward_model, **schedule_kwargs)
             for metric_name, metric in self.logging_metrics.items()
         }
 
@@ -162,32 +162,32 @@ class Sampler:
             return metrics
         
         if isinstance(self.sampling_metric, CompositeMetric):
-            metrics[self.sampling_metric.name] = self.sampling_metric.compute(split_state_actions, reward_model, **schedule_kwargs)
+            metrics[self.sampling_metric.name] = self.sampling_metric.compute(state_action_pairs, reward_model, **schedule_kwargs)
             for metric_name, metric in self.sampling_metric.metrics.items():
                 weight = self.sampling_metric.weight_schedules[metric_name](**schedule_kwargs)
-                metrics[f"{self.sampling_metric.name}_{metric_name}"] = weight * metric.compute(split_state_actions, reward_model, **schedule_kwargs)
+                metrics[f"{self.sampling_metric.name}_{metric_name}"] = weight * metric.compute(state_action_pairs, reward_model, **schedule_kwargs)
         elif self.sampling_metric.name not in metrics:
-            metrics[self.sampling_metric.name] = self.sampling_metric.compute(split_state_actions, reward_model, **schedule_kwargs)
+            metrics[self.sampling_metric.name] = self.sampling_metric.compute(state_action_pairs, reward_model, **schedule_kwargs)
         
         return metrics
 
 
-    def sample_segments(self, episodes: list, num_samples: int, stratified: bool = False,
+    def sample_segments(self, episodes: list, episode_ages: list, num_samples: int, stratified: bool = False,
                         reward_model: Optional[Callable] = None, compute_uniform_metrics: bool = True, **schedule_kwargs):
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
-        split_state_actions, split_rewards = self._sample_random_segments(episodes, num_samples_expanded, stratified)
+        ep_indices, state_action_pairs, reward_pairs = self._sample_random_segments(episodes, num_samples_expanded, stratified)
 
         if method != 'uniform' or compute_uniform_metrics:
-            metrics = self.compute_logging_metrics(split_state_actions, reward_model, **schedule_kwargs)
+            metrics = self.compute_logging_metrics(state_action_pairs, reward_model, **schedule_kwargs)
         else:
             metrics = {}
 
         if method == 'uniform':
-            return split_state_actions, split_rewards, metrics
+            return state_action_pairs, reward_pairs, metrics
 
         assert self.sampling_metric
-        sampling_scores = self.sampling_metric.compute(split_state_actions, reward_model, **schedule_kwargs)
+        sampling_scores = self.sampling_metric.compute(state_action_pairs, reward_model, **schedule_kwargs)
         idx = torch.topk(sampling_scores, num_samples).indices.to('cpu')
-        return split_state_actions[idx], split_rewards[:, idx], metrics
+        return state_action_pairs[idx], reward_pairs[:, idx], metrics

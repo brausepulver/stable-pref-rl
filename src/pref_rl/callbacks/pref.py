@@ -101,8 +101,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         obs_size, act_size = self._get_input_sizes()
         self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps, keep_all_eps=self.save_episode_data)
         self.sampler = Sampler(self.segment_size, obs_size, act_size, sampling_metric)
-        if self.uniform_frac > 0:
-            self.uniform_sampler = Sampler(self.segment_size, obs_size, act_size)
+        self.uniform_sampler = Sampler(self.segment_size, obs_size, act_size)
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher_str, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
@@ -117,18 +116,18 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
-    def _sample_segments(self, episodes, num_samples, reward_model):
+    def _sample_segments(self, sampler: Sampler, episodes, episode_ages, num_samples, reward_model):
         num_uniform = int(num_samples * self.uniform_frac)
         num_specific = num_samples - num_uniform
 
-        state_actions, rewards, _ = self.sampler.sample_segments(episodes, num_specific, reward_model)
+        state_actions, rewards, _ = sampler.sample_segments(episodes, episode_ages, num_specific, reward_model=reward_model)
 
         if num_uniform > 0:
-            state_actions_uniform, rewards_uniform, _ = self.sampler.sample_segments(episodes, num_uniform, reward_model)
+            state_actions_uniform, rewards_uniform, _ = sampler.sample_segments(episodes, episode_ages, num_uniform, reward_model=reward_model)
             state_actions = torch.cat([state_actions, state_actions_uniform], dim=0)
             rewards = torch.cat([rewards, rewards_uniform], dim=1)
 
-        metrics = self.sampler.compute_logging_metrics(state_actions, reward_model) if self.log_sampler_metrics else {}
+        metrics = sampler.compute_logging_metrics(state_actions, reward_model) if self.log_sampler_metrics else {}
         return state_actions, rewards, metrics
 
 
@@ -155,7 +154,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             self.buffer_position += num_items
 
 
-    def _expand_data(self, sampling_method: str):
+    def _expand_data(self, sampler: Sampler):
         progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
         feed_batch_size = int(self.feed_schedule(
             progress_remaining,
@@ -164,10 +163,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         ))
 
         episodes = self.buffer.get_episodes()
+        episode_ages = self.buffer.get_episode_ages()
         num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
         reward_model = self._get_predictor()
 
-        state_actions, rewards, sampler_metrics = self._sample_segments(episodes, num_samples, reward_model)
+        state_actions, rewards, sampler_metrics = self._sample_segments(sampler, episodes, episode_ages, num_samples, reward_model=reward_model)
 
         if self.log_sampler_metrics and sampler_metrics:
             self._log_sampler_metrics(sampler_metrics, prefix='sampler/')
@@ -210,7 +210,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         obs, act, gt_rewards = self._get_current_step()
         annotations = torch.cat([obs, act, gt_rewards], dim=-1)
-        self.buffer.add(annotations, self.locals['dones'])
+        self.buffer.add(annotations, self.locals['dones'], self.num_timesteps)
 
         if self.locals['dones'].any():
             recent_eps = list(itertools.islice(reversed(self.buffer.get_episodes()), self.margins_stats_window_size))
@@ -228,9 +228,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         should_stop_training = self.n_steps_last_train is not None and self.num_timesteps >= self.n_steps_last_train
 
         if (should_first_train or should_train) and (feedback_left or self.keep_training) and not should_stop_training:
-            sampling_method = self.sampling_method if self.has_trained else 'uniform'
+            sampler = self.sampler if self.has_trained else self.uniform_sampler
             if feedback_left:
-                self._expand_data(sampling_method)
+                self._expand_data(sampler)
             self._train_predictor()
             self.steps_since_train = 0
 
