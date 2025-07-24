@@ -247,4 +247,4 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         elif self.has_trained and not feedback_left:
             self.training_progress = (self.num_timesteps - self.n_steps_first_train) / self.n_steps_train_total
 
-        return True if not self.has_trained else super()._on_step()
+        return super()._on_step()

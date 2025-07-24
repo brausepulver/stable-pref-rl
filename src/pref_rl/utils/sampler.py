@@ -33,10 +33,10 @@ class DisagreementMetric(BaseSamplerMetric):
         return 'disagreement'
 
 
-    def compute(self, split_state_actions: torch.Tensor, reward_model, **schedule_kwargs) -> torch.Tensor:
+    def compute(self, state_action_pairs: torch.Tensor, reward_model, **schedule_kwargs) -> torch.Tensor:
         with torch.no_grad():
             device = next(reward_model.parameters()).device
-            member_rewards = reward_model(split_state_actions.to(device))
+            member_rewards = reward_model(state_action_pairs.to(device))
             member_returns = einops.reduce(member_rewards, 'm n p s 1 -> m n p', 'sum')
             probabilities = F.softmax(member_returns, dim=-1)
             return probabilities[..., 0].std(dim=0)
@@ -48,10 +48,10 @@ class EntropyMetric(BaseSamplerMetric):
         return 'entropy'
 
 
-    def compute(self, split_state_actions: torch.Tensor, reward_model, **schedule_kwargs) -> torch.Tensor:
+    def compute(self, state_action_pairs: torch.Tensor, reward_model, **schedule_kwargs) -> torch.Tensor:
         with torch.no_grad():
             device = next(reward_model.parameters()).device
-            member_rewards = reward_model(split_state_actions.to(device))
+            member_rewards = reward_model(state_action_pairs.to(device))
             member_returns = einops.reduce(member_rewards, 'm n p s 1 -> m n p', 'sum')
             probabilities = F.softmax(member_returns, dim=-1)
             member_entropies = -torch.sum(probabilities * torch.log(probabilities), dim=-1)
