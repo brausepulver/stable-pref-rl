@@ -91,6 +91,8 @@ class PrefPPOCallback(BasePrefCallback):
 
         self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
 
+        self.has_trained_synth = False
+
 
     def _get_predictor(self):
         return self.reward_model
@@ -139,8 +141,14 @@ class PrefPPOCallback(BasePrefCallback):
         def compute_losses_for_module(module: nn.Module, module_is_ensemble: bool = False):
             real_dataset = TensorDataset(*self.feed_buffer.get_current_slice())
             real_metrics = self._train_module_epoch(module, real_dataset, module_is_ensemble)
-            synth_dataset = TensorDataset(*self.synth_buffer.get_current_slice())
-            synth_metrics = self._train_module_epoch(module, synth_dataset, module_is_ensemble)
+
+            if self.synth_enabled and len(self.synth_buffer) > 0:
+                synth_dataset = TensorDataset(*self.synth_buffer.get_current_slice())
+                synth_metrics = self._train_module_epoch(module, synth_dataset, module_is_ensemble)
+                self.has_trained_synth = True
+            else:
+                synth_metrics = None
+
             return real_metrics, synth_metrics
 
         if not self.train_members_sequential:
@@ -182,9 +190,8 @@ class PrefPPOCallback(BasePrefCallback):
             if accuracy > self.train_acc_threshold_reward:
                 break
 
-        real_metrics, synth_metrics = zip(metrics)
-        real_loss, real_acc = np.mean(list(zip(real_metrics)))
-        synth_loss, synth_acc = np.mean(list(zip(synth_metrics)))
+        real_metrics, synth_metrics = zip(*metrics)
+        real_loss, real_acc = np.mean(real_metrics[0]), np.mean(real_metrics[1])
 
         log_metrics = {
             'reward_model/train/loss': np.mean(losses),
@@ -192,9 +199,14 @@ class PrefPPOCallback(BasePrefCallback):
             'reward_model/train/epochs': epoch + 1,
             'reward_model/train/real_loss': real_loss,
             'reward_model/train/real_acc': real_acc,
-            'reward_model/train/synth_loss': synth_loss,
-            'reward_model/train/synth_acc': synth_acc,
         }
+
+        if self.has_trained_synth:
+            synth_loss, synth_acc = np.mean(synth_metrics[0]), np.mean(synth_metrics[1])
+            log_metrics |= {
+                'reward_model/train/synth_loss': synth_loss,
+                'reward_model/train/synth_acc': synth_acc,
+            }
 
         for key, value in log_metrics.items():
             self.logger.record(key, value)

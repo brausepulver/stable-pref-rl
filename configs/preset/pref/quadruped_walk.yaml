@@ -33,8 +33,6 @@ method:
     synth_stop_step: 1_000_000
     synth_buffer_size: 100_000
     synth_teacher_kwargs:
-      limit_old_recent_steps: 100000
-      limit_new_recent_steps: 50000
-      weight_scheme: 'constant'
-      max_weight: 0.5
-      sampling_method: 'uniform'
+      neg_eps_until_steps: 100000
+      pos_eps_after_eq_steps: 50000
+      loss_weight: 0.5
