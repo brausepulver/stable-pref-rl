@@ -27,8 +27,10 @@ class TemporalSynthesizer:
 
 
     def _calculate_metrics(self, prev_ages: torch.Tensor, cur_ages: torch.Tensor) -> dict:
-        diff = (prev_ages.mean(dtype=torch.float) - cur_ages.mean(dtype=torch.float)).item() if prev_ages.numel() and cur_ages.numel() else 0.0
-        return {'synth_avg_age_diff': diff}
+        return {
+            'synth_age_negative': prev_ages.to(torch.float),
+            'synth_age_positive': cur_ages.to(torch.float),
+        }
 
 
     def generate_pairs(self, episodes: list, ep_start_steps: list[int], num_samples: int, timesteps: int):
