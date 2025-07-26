@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-N_RUNS_LARGE=175
-N_RUNS_SMALL=56
+N_RUNS_LARGE=${1:-168}
+N_RUNS_SMALL=${1:-56}
 
 PRETRAIN_STEPS=(
     null

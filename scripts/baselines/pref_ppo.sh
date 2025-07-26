@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 
-N_RUNS=150
+N_RUNS=${1:-168}
 
 BASE_PARAMS=(
     'hydra.run.dir=outputs/${oc.env:JOB_ID}'
     "preset=pref_ppo/quadruped_walk"
     "training.total_timesteps=2000000"
     "preset.method.clip_range.end=0.2"
-    "preset.method.unsuper.n_steps_unsuper=32000"
-    "preset.method.pref.ann_buffer_size_eps=null"
     # "preset.method.save_callback_data=true"
     # "preset.method.save_episode_data=true"
 )

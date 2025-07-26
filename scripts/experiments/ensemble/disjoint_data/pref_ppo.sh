@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 
+N_RUNS=${1:-56}
+
 BASE_PARAMS=(
+    'hydra.run.dir=outputs/${oc.env:JOB_ID}'
     "preset=pref_ppo/quadruped_walk"
     "training.total_timesteps=2000000"
     "preset.method.clip_range.end=0.2"
-    "training.num_envs=16"
-    "preset.env.limit_ep_steps=1000"
-    "preset.method.unsuper.n_steps_unsuper=32000"
-    "preset.method.pref.n_steps_reward=32000"
-    "preset.method.pref.teacher=oracle"
-    "preset.method.pref.device=cpu"
     "preset.method.pref.sampler=disagreement"
     "preset.method.pref.ensemble_disjoint_data=true"
 )
