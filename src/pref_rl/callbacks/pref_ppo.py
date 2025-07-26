@@ -1,14 +1,16 @@
+from collections import defaultdict
 import einops
 from hydra.utils import to_absolute_path
 import numpy as np
 from pathlib import Path
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset, Subset, ConcatDataset
 from typing import Callable, Optional
 
 from .pref import BasePrefCallback
-from ..utils.reward_models import RewardModel, MultiHeadRewardModel
+from ..utils.data import MaskedDataset
+from ..utils.reward_models import RewardModel, MultiHeadMember, MultiHeadRewardModel
 from ..utils.sampler import NoValidEpisodesError
 from ..utils.teacher import Teacher
 
@@ -30,6 +32,7 @@ class PrefPPOCallback(BasePrefCallback):
         ensemble_disjoint_data: bool = False,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
+        num_samples_ep_age: Optional[int] = None,
         **kwargs
     ):
         super().__init__(log_sampler_metrics=log_sampler_metrics, **kwargs)
@@ -47,6 +50,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.log_sampler_metrics = log_sampler_metrics
         self.ensemble_disjoint_data = ensemble_disjoint_data
         self.ensemble_agg_fn = ensemble_agg_fn
+        self.num_samples_ep_age = num_samples_ep_age
 
         self.reward_model_cls = {
             'reward_model': RewardModel,
@@ -83,8 +87,6 @@ class PrefPPOCallback(BasePrefCallback):
 
         self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
 
-        self.has_trained_synth = False
-
 
     def _get_predictor(self):
         return self.reward_model
@@ -93,116 +95,135 @@ class PrefPPOCallback(BasePrefCallback):
     def _compute_loss(self, pred_rewards: torch.Tensor, preferences: torch.Tensor, weight: Optional[torch.Tensor] = None):
         pred_returns = einops.reduce(pred_rewards, '... batch pair segment 1 -> ... batch pair', 'sum')
         inputs = pred_returns[..., 1] - pred_returns[..., 0]
-        criterion = nn.BCEWithLogitsLoss(weight=weight)
-        loss = criterion(inputs, preferences)
+        criterion = nn.BCEWithLogitsLoss(weight=weight, reduction='none')
+        losses = criterion(inputs, preferences)
 
         pred_preferences = torch.argmax(pred_returns, dim=-1)
         correct = (pred_preferences == preferences).float()
-        accuracy = correct.mean().item()
 
-        return loss, accuracy
+        return losses, correct
 
 
-    def _train_module_epoch(self, module: nn.Module, dataset: TensorDataset, module_is_ensemble: bool = False):
+    def _train_module_epoch(self, module: nn.Module, dataset: Dataset, ep_ages_dataset: Optional[Dataset], module_is_ensemble: bool = False):
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
-        losses = []
-        accuracies = []
+        metrics = []
 
-        for segments, preferences, weights in dataloader:
+        for segments, preferences, weights, mask in dataloader:
             self.rew_optimizer.zero_grad()
 
             pred_rewards = module(segments)
             if module_is_ensemble:
                 pred_rewards = self.ensemble_agg_fn(pred_rewards)
 
-            loss, accuracy = self._compute_loss(pred_rewards, preferences, weights)
+            losses, correct = self._compute_loss(pred_rewards, preferences, weights)
+            losses.backward()
+            self.rew_optimizer.step()
+
+            real_idx = torch.argwhere(mask == 0)
+            synth_idx = torch.argwhere(mask == 1)
+
+            metrics.append({
+                'loss': losses.mean().item(),
+                'accuracy': correct.mean().item(),
+                'real_loss': losses[real_idx].mean().item(),
+                'real_acc': correct[real_idx].mean().item(),
+                'synth_loss': losses[synth_idx].mean().item(),
+                'synth_acc': correct[synth_idx].mean().item(),
+            })
+
+        if ep_ages_dataset is None:
+            return metrics
+
+        ages_dataloader = DataLoader(ep_ages_dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
+
+        for segments, segment_ages in ages_dataloader:
+            self.rew_optimizer.zero_grad()
+
+            assert isinstance(module, MultiHeadMember)
+            predictions = module.auxiliary(segments)
+
+            criterion = nn.MSELoss()
+            loss = criterion(predictions, segment_ages)
             loss.backward()
             self.rew_optimizer.step()
 
-            losses.append(loss.item())
-            accuracies.append(accuracy)
+            metrics.append({'age_loss': loss})
 
-        return np.mean(losses), np.mean(accuracies)
+        return metrics
+
+
+    def _get_dataset(self):
+        real_dataset = MaskedDataset(self.feed_buffer.get_dataset(), 0)
+        synth_dataset = MaskedDataset(self.synth_buffer.get_dataset(), 1)
+        return ConcatDataset([real_dataset, synth_dataset])
+
+
+    def _get_episode_ages_dataset(self, num_samples: int):
+        episodes = self.buffer.get_episodes()
+        episode_ages = self.buffer.get_episode_ages()
+        normalized_ep_ages = episode_ages / self.model._total_timesteps
+
+        ep_indices, segments, _ = self.uniform_sampler.sample_segments(episodes, num_samples)
+        segment_ages = normalized_ep_ages[ep_indices]
+        return TensorDataset(segments, segment_ages)
+
+
+    def _get_subset_for_member(self, dataset: Dataset, member_idx: int, length: int, ensemble_size: int):
+        indices = range(member_idx, length, ensemble_size)
+        return Subset(dataset, indices)
 
 
     def _train_reward_model_epoch(self):
-        combined_items = zip(self.feed_buffer.get_current_slice(), self.synth_buffer.get_current_slice())
-        segments, preferences, weights = [torch.cat(item) for item in combined_items]
-        dataset = TensorDataset(segments, preferences, weights)
-    
-        def compute_losses_for_module(module: nn.Module, module_is_ensemble: bool = False):
-            real_dataset = TensorDataset(*self.feed_buffer.get_current_slice())
-            real_metrics = self._train_module_epoch(module, real_dataset, module_is_ensemble)
-
-            if self.synth_enabled and len(self.synth_buffer) > 0:
-                synth_dataset = TensorDataset(*self.synth_buffer.get_current_slice())
-                synth_metrics = self._train_module_epoch(module, synth_dataset, module_is_ensemble)
-                self.has_trained_synth = True
-            else:
-                synth_metrics = None
-
-            return real_metrics, synth_metrics
+        dataset = self._get_dataset()
+        if self.num_samples_ep_age is not None:
+            ep_ages_dataset = self._get_episode_ages_dataset(self.num_samples_ep_age)
 
         if not self.train_members_sequential:
-            loss, acc = self._train_module_epoch(self.reward_model, dataset, module_is_ensemble=True)
-            metrics = compute_losses_for_module(self.reward_model, True)
-            return loss, acc, metrics
+            metrics = self._train_module_epoch(self.reward_model, dataset, ep_ages_dataset, module_is_ensemble=True)
+            return metrics
 
-        losses = []
-        accuracies = []
         metrics = []
 
         for index, member in enumerate(self.reward_model.members):
             if self.ensemble_disjoint_data:
-                step = len(self.reward_model.members)
-                idx = torch.arange(index, self.num_feed, step, device=segments.device)
-                dataset = TensorDataset(segments[idx], preferences[idx], weights[idx])
-            
-            loss, accuracy = self._train_module_epoch(member, dataset)
-            losses.append(loss)
-            accuracies.append(accuracy)
+                ensemble_size = len(self.reward_model.members)
+                dataset_member = self._get_subset_for_member(dataset, index, len(dataset), ensemble_size)
+                if ep_ages_dataset is not None:
+                    ep_ages_dataset_member = self._get_subset_for_member(ep_ages_dataset, index, len(ep_ages_dataset), ensemble_size)
+                member_metrics = self._train_module_epoch(member, dataset_member, ep_ages_dataset_member)
+            else:
+                member_metrics = self._train_module_epoch(member, dataset, ep_ages_dataset)
 
-            member_metrics = compute_losses_for_module(member)
             metrics.append(member_metrics)
 
-        return np.mean(losses), np.mean(accuracies), metrics
+        return metrics
 
 
     def _train_predictor(self):
         self.reward_model.train()
 
-        losses = []
-        accuracies = []
-
+        metrics = []
         for epoch in range(self.n_epochs_reward):
-            loss, accuracy, metrics = self._train_reward_model_epoch()
-            losses.append(loss)
-            accuracies.append(accuracy)
+            epoch_metrics = self._train_reward_model_epoch()
+            metrics.extend(epoch_metrics)
 
-            if accuracy > self.train_acc_threshold_reward:
+            epoch_accuracy = np.mean([batch['accuracy'] for batch in epoch_metrics if 'accuracy' in batch])
+            if epoch_accuracy > self.train_acc_threshold_reward:
                 break
 
-        real_metrics, synth_metrics = zip(*metrics)
-        real_loss, real_acc = np.mean(real_metrics[0]), np.mean(real_metrics[1])
+        grouped_metrics = {}
+        for batch_metrics in metrics:
+            for name, value in batch_metrics.items():
+                grouped_metrics[name].append(value)
 
-        log_metrics = {
-            'reward_model/train/loss': np.mean(losses),
-            'reward_model/train/accuracy': np.mean(accuracies),
-            'reward_model/train/epochs': epoch + 1,
-            'reward_model/train/real_loss': real_loss,
-            'reward_model/train/real_acc': real_acc,
+        avg_metrics = {key: np.mean(value) for key, value in grouped_metrics.items()}
+        all_metrics = avg_metrics | {
+            'epochs': epoch + 1,
         }
-
-        if self.has_trained_synth:
-            synth_loss, synth_acc = np.mean(synth_metrics[0]), np.mean(synth_metrics[1])
-            log_metrics |= {
-                'reward_model/train/synth_loss': synth_loss,
-                'reward_model/train/synth_acc': synth_acc,
-            }
+        log_metrics = {f"reward_model/train/{name}": value for name, value in all_metrics.items()}
 
         for key, value in log_metrics.items():
             self.logger.record(key, value)
-
         if self.run:
             self.run.log({
                 **log_metrics,
@@ -358,7 +379,7 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_train(self):
-        metrics = self._validate_on_episodes(self.buffer.get_episodes(), self.buffer.get_episode_ages(), len(self.segment_buffer))
+        metrics = self._validate_on_episodes(self.buffer.get_episodes(), self.buffer.get_episode_ages(), len(self.feed_buffer))
         self._log_validation_metrics(metrics)
 
 

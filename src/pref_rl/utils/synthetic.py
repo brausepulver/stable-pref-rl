@@ -33,13 +33,12 @@ class TemporalSynthesizer:
         }
 
 
-    def generate_pairs(self, episodes: list, ep_start_steps: list[int], num_samples: int, timesteps: int):
+    def generate_pairs(self, episodes: list, episode_ages: torch.Tensor, num_samples: int, timesteps: int):
         if not episodes:
             raise ValueError("Episodes must not be empty to generate synthetic pairs")
 
-        ep_starts_tensor = torch.tensor(ep_start_steps)
-        prev_mask = ep_starts_tensor < (timesteps - self.neg_eps_until_steps)
-        cur_mask = ep_starts_tensor >= (timesteps - self.pos_eps_after_eq_steps)
+        prev_mask = episode_ages < (timesteps - self.neg_eps_until_steps)
+        cur_mask = episode_ages >= (timesteps - self.pos_eps_after_eq_steps)
 
         prev_eps = [ep for m, ep in zip(prev_mask, episodes) if m]
         cur_eps = [ep for m, ep in zip(cur_mask, episodes) if m]
@@ -55,5 +54,5 @@ class TemporalSynthesizer:
         preferences = torch.ones(num_segments, dtype=torch.float32)
 
         loss_weights = self._calculate_loss_weights(num_samples)
-        metrics = self._calculate_metrics(ep_starts_tensor[prev_mask], ep_starts_tensor[cur_mask])
+        metrics = self._calculate_metrics(episode_ages[prev_mask], episode_ages[cur_mask])
         return segments, preferences, metrics, loss_weights

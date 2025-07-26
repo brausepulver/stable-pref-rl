@@ -18,6 +18,23 @@ class RewardModel(nn.Module):
         return torch.stack([member(x) for member in self.members])
 
 
+class MultiHeadMember(nn.Module):
+    def __init__(self, trunk, head, output_fn):
+        super().__init__()
+        self.trunk = trunk
+        self.head = head
+        self.output_fn = output_fn
+    
+    def forward(self, x):
+        output = self.head(self.trunk(x))
+        first_head = self.output_fn(output[:, 0])
+        return first_head
+
+    def auxiliary(self, x):
+        output = self.head(self.trunk(x))
+        return output[:, 1:]
+
+
 class MultiHeadRewardModel(nn.Module):
     def __init__(self, input_dim, ensemble_size=3, **kwargs):
         super().__init__()
@@ -32,23 +49,7 @@ class MultiHeadRewardModel(nn.Module):
         )
         head = nn.Linear(net_arch[-1], n_heads, bias=False)
         
-        class MultiHead(nn.Module):
-            def __init__(self, trunk, head, output_fn):
-                super().__init__()
-                self.trunk = trunk
-                self.head = head
-                self.output_fn = output_fn
-            
-            def forward(self, x):
-                output = self.head(self.trunk(x))
-                first_head = self.output_fn(output[:, 0])
-                return first_head
-
-            def auxiliary(self, x):
-                output = self.head(self.trunk(x))
-                return output[:, 1:]
-        
-        return MultiHead(trunk, head, output_fn)
+        return MultiHeadMember(trunk, head, output_fn)
 
 
     def forward(self, x):

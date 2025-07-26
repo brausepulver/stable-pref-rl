@@ -3,6 +3,7 @@ from typing import List
 
 import numpy as np
 import torch
+from torch.utils.data import TensorDataset
 
 
 class EpisodeBuffer:
@@ -42,7 +43,7 @@ class EpisodeBuffer:
         done_ages = [ep[0] for ep in self.done_eps]
         if self.keep_all_eps:
             done_ages = done_ages[-self.n_episodes:]
-        return done_ages + running_ages
+        return torch.tensor(done_ages + running_ages)
 
 
 class FeedbackBuffer:
@@ -89,8 +90,8 @@ class FeedbackBuffer:
         return num_items
 
 
-    def get_current_slice(self):
-        return self.segments[:self.size], self.preferences[:self.size], self.weights[:self.size],
+    def get_dataset(self):
+        return TensorDataset(self.segments[:self.size], self.preferences[:self.size], self.weights[:self.size])
 
 
     def clear(self):
