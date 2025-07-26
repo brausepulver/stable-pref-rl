@@ -8,23 +8,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from typing import Callable, Optional
 
 from .pref import BasePrefCallback
-from ..utils.model import build_layered_module
+from ..utils.reward_models import RewardModel, MultiHeadRewardModel
 from ..utils.sampler import NoValidEpisodesError
 from ..utils.teacher import Teacher
-
-
-class RewardModel(nn.Module):
-    def __init__(self, input_dim, ensemble_size=3, **kwargs):
-        super().__init__()
-        self.members = nn.ModuleList([self._build_member(input_dim, **kwargs) for _ in range(ensemble_size)])
-
-
-    def _build_member(self, input_dim, net_arch=[256, 256, 256], activation_fn=nn.LeakyReLU(), output_fn=nn.Tanh()):
-        return build_layered_module(input_dim, net_arch=net_arch, activation_fn=activation_fn, output_fn=output_fn)
-
-
-    def forward(self, x):
-        return torch.stack([member(x) for member in self.members])
 
 
 class PrefPPOCallback(BasePrefCallback):
@@ -43,6 +29,7 @@ class PrefPPOCallback(BasePrefCallback):
         log_sampler_metrics: bool = True,
         ensemble_disjoint_data: bool = False,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
+        reward_model_kind: str = 'reward_model',
         **kwargs
     ):
         super().__init__(log_sampler_metrics=log_sampler_metrics, **kwargs)
@@ -61,6 +48,11 @@ class PrefPPOCallback(BasePrefCallback):
         self.ensemble_disjoint_data = ensemble_disjoint_data
         self.ensemble_agg_fn = ensemble_agg_fn
 
+        self.reward_model_cls = {
+            'reward_model': RewardModel,
+            'multi_head_reward_model': MultiHeadRewardModel,
+        }[reward_model_kind]
+
         self.held_out_data_path = (
             Path(to_absolute_path(held_out_data_path))
             if held_out_data_path else None
@@ -77,7 +69,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.ensemble_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
 
         obs_size, act_size = self._get_input_sizes()
-        self.reward_model = RewardModel(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
+        self.reward_model = self.reward_model_cls(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
 
         if self.train_members_sequential:
             optim_params = [member.parameters() for member in self.reward_model.members]

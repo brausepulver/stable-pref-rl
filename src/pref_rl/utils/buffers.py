@@ -13,6 +13,7 @@ class EpisodeBuffer:
 
         self._running_eps: List = [None] * n_envs
 
+
     def add(self, value: torch.Tensor, done: np.ndarray, timesteps: int):
         for env_idx, env_value in enumerate(value):
             if self._running_eps[env_idx] is None:
@@ -27,12 +28,14 @@ class EpisodeBuffer:
             self.done_eps.append((age, torch.stack(steps)))
             self._running_eps[env_idx] = None
 
+
     def get_episodes(self):
         running = [torch.stack(ep[1]) for ep in self._running_eps if ep is not None]
         done = [ep[1] for ep in self.done_eps]
         if self.keep_all_eps:
             done = done[-self.n_episodes:]
         return done + running
+
 
     def get_episode_ages(self):
         running_ages = [ep[0] for ep in self._running_eps if ep is not None]
