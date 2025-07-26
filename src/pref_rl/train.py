@@ -67,6 +67,7 @@ def main(cfg: DictConfig) -> None:
 
     # Create eval environment
     eval_env = make_env(**cfg.preset.env)
+    eval_env.seed(cfg.training.seed + cfg.training.num_envs)
 
     if env_file := cfg.get('load_env'):
         env = VecNormalize.load(env_file, env)
@@ -79,6 +80,7 @@ def main(cfg: DictConfig) -> None:
             best_model_save_path="./best_model" if cfg.logging.save_best_eval_models else None,
             log_path="./logs",
             eval_freq=cfg.logging.eval_freq,
+            n_eval_episodes=cfg.logging.n_eval_episodes,
             deterministic=True,
             render=False
         ),
@@ -100,7 +102,7 @@ def main(cfg: DictConfig) -> None:
         except Exception as e:
             raise ValueError("Failed to load model: cfg.preset.method._target_ must be set to the model class path") from e
     else:
-        model: BaseAlgorithm = hydra.utils.instantiate(
+        model = hydra.utils.instantiate(
             cfg.preset.method,
             policy,
             env,

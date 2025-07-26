@@ -11,7 +11,8 @@ training:
 logging:
   tags: []
   group: null
-  eval_freq: 50_000
+  eval_freq: 4_000
+  n_eval_episodes: 5
   save_best_eval_models: false
   save_checkpoints: false
   checkpoint_freq: 100_000
