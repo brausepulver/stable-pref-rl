@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, ConcatDataset
 from .reward_mod import RewardModifierCallback
 from ..utils.buffers import EpisodeBuffer, FeedbackBuffer
 from ..utils.data import MaskedDataset
-from ..utils.sampler import DisagreementMetric, EntropyMetric, Sampler
+from ..utils.sampler import DisagreementMetric, EntropyMetric, PredictedAgeMetric, Sampler
 from ..utils.schedules import PrefScheduleState
 from ..utils.synthetic import BaseSynthesizer
 from ..utils.train_schedules import TrainingSchedule
@@ -92,6 +92,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             metric_classes = {
                 'disagreement': DisagreementMetric,
                 'entropy': EntropyMetric,
+                'pred_age': PredictedAgeMetric,
             }
             metric_class = metric_classes.get(self.sampler_metric)
             self.sampler_metric = metric_class() if metric_class else None

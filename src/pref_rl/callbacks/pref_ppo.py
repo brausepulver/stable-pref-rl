@@ -7,10 +7,11 @@ from hydra.utils import to_absolute_path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset, Dataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset, ConcatDataset
 
 from .pref import BasePrefCallback
-from ..utils.reward_models import RewardModel
+from ..utils.data import MaskedDataset
+from ..utils.reward_models import RewardModel, MultiHeadMember, MultiHeadRewardModel
 from ..utils.sampler import NoValidEpisodesError
 from ..utils.schedules import PrefPPOScheduleState
 from ..utils.teacher import Teacher
@@ -34,6 +35,8 @@ class PrefPPOCallback(BasePrefCallback):
         log_validation_sampler_metrics: bool = True,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
+        num_samples_ep_age: Optional[int] = None,
+        ep_age_reward_weight: float = 0.0,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -52,9 +55,12 @@ class PrefPPOCallback(BasePrefCallback):
         self.log_held_out_sampler_metrics = log_held_out_sampler_metrics
         self.log_validation_sampler_metrics = log_validation_sampler_metrics
         self.ensemble_agg_fn = ensemble_agg_fn
+        self.num_samples_ep_age = num_samples_ep_age
+        self.ep_age_reward_weight = ep_age_reward_weight
 
         self.reward_model_cls = {
             'reward_model': RewardModel,
+            'multi_head_reward_model': MultiHeadRewardModel,
         }[reward_model_kind]
 
         self.held_out_data_path = (
@@ -82,6 +88,7 @@ class PrefPPOCallback(BasePrefCallback):
         super()._init_callback()
 
         self.ensemble_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
+        self.age_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
 
         obs_size, act_size = self._get_input_sizes()
         self.reward_model = self.reward_model_cls(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
@@ -140,7 +147,7 @@ class PrefPPOCallback(BasePrefCallback):
         return metrics
 
 
-    def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset):
+    def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset, ep_ages_dataset: Optional[Dataset]):
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         metrics = []
 
@@ -155,17 +162,48 @@ class PrefPPOCallback(BasePrefCallback):
 
             metrics.append(self._compute_batch_metrics(losses, correct, mask))
 
+        if ep_ages_dataset is None:
+            return metrics
+
+        ages_dataloader = DataLoader(ep_ages_dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
+
+        for segments, segment_ages in ages_dataloader:
+            optimizer.zero_grad()
+
+            assert isinstance(member, MultiHeadMember)
+            predictions = member.auxiliary(segments)
+
+            criterion = nn.MSELoss()
+            loss = criterion(predictions, segment_ages)
+            loss.backward()
+            optimizer.step()
+
+            metrics.append({'age_loss': loss})
+
         return metrics
 
 
-    def _train_reward_model_epoch(self, dataset):
-        metrics = []
+    def _get_episode_ages_dataset(self, num_samples: int):
+        episodes = self.buffer.get_episodes()
+        episode_ages = self.buffer.get_episode_ages()
+        normalized_ep_ages = episode_ages / self.model._total_timesteps
 
+        ep_indices, segments, _ = self.uniform_sampler.sample_segments(episodes, num_samples)
+        segment_ages = normalized_ep_ages[ep_indices]
+        return TensorDataset(segments, segment_ages)
+
+
+    def _train_reward_model_epoch(self, dataset):
+        if self.num_samples_ep_age is not None:
+            ep_ages_dataset = self._get_episode_ages_dataset(self.num_samples_ep_age)
+        else:
+            ep_ages_dataset = None
+
+        metrics = []
         for index, member in enumerate(self.reward_model.members):
             optimizer = self.rew_optimizers[index]
-            member_metrics = self._train_member_epoch(member, optimizer, dataset)
+            member_metrics = self._train_member_epoch(member, optimizer, dataset, ep_ages_dataset)
             metrics.append(member_metrics)
-
         return metrics
 
 
@@ -292,6 +330,16 @@ class PrefPPOCallback(BasePrefCallback):
                 )
             pred_rewards = self.ensemble_agg_fn(member_rewards)
 
+        if self.ep_age_reward_weight > 0:
+            with torch.no_grad():
+                member_ages = [member.auxiliary(state_actions) for member in self.reward_model.members]
+                pred_ages = torch.mean(member_ages, dim=-1)
+                current_age = next(ep[0] for ep in self.buffer.running_eps)
+                age_diffs = torch.abs(current_age - pred_ages)
+                age_rewards = self.ep_age_reward_weight * (1 - age_diffs)
+                self.age_reward_buffer.append(age_rewards)
+                pred_rewards += age_rewards
+
         return pred_rewards
 
 
@@ -317,6 +365,10 @@ class PrefPPOCallback(BasePrefCallback):
                 ep_info['pred_r_uncertainty_coef_var'] = np.mean(coef_vars)
                 
                 self.ensemble_reward_buffer[env_idx] = []
+
+            if self.age_reward_buffer[env_idx]:
+                ep_age_rew_mean = np.mean(self.age_reward_buffer[env_idx])
+                ep_info['pred_age'] = ep_age_rew_mean
 
 
     def _on_training_start(self) -> None:

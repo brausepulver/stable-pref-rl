@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .schedules import ConstantSchedule, BaseScheduleState
+from .reward_models import MultiHeadRewardModel
 
 
 class NoValidEpisodesError(ValueError):
@@ -57,6 +58,20 @@ class EntropyMetric(BaseSamplerMetric):
         member_entropies = -torch.sum(probabilities * torch.log(probabilities), dim=-1)
         values = member_entropies.mean(dim=0)
         return {self.name: values}
+
+
+class PredictedAgeMetric(BaseSamplerMetric):
+    @property
+    def name(self) -> str:
+        return 'pred_age'
+
+    def compute(self, state_action_pairs, reward_model, schedule_state):
+        assert isinstance(reward_model, MultiHeadRewardModel)
+        with torch.no_grad():
+            device = next(reward_model.parameters()).device
+            member_step_ages = [member.auxiliary(state_action_pairs.to(device)) for member in reward_model.members]
+            member_ages = einops.reduce(member_step_ages, 'm n p s 1 -> m n p', 'mean')
+            return -member_ages.mean(dim=0)
 
 
 class CompositeMetric(BaseSamplerMetric):
