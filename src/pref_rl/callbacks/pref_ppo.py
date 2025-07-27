@@ -111,9 +111,25 @@ class PrefPPOCallback(BasePrefCallback):
         losses = criterion(inputs, preferences)
 
         pred_preferences = torch.argmax(pred_returns, dim=-1)
-        correct = (pred_preferences == preferences).float()
+        correct = (pred_preferences == preferences)
 
         return losses, correct
+
+
+    def _compute_batch_metrics(self, losses: torch.Tensor, correct: torch.Tensor, mask: torch.Tensor):
+        real_idx = torch.argwhere(mask == 0)
+        synth_idx = torch.argwhere(mask == 1)
+        
+        return {
+            'loss': losses.mean().item(),
+            'loss_correct': losses[correct].mean().item(),
+            'loss_incorrect': losses[~correct].mean().item(),
+            'accuracy': correct.mean(dtype=torch.float).item(),
+            'real_loss': losses[real_idx].mean().item(),
+            'real_acc': correct[real_idx].mean(dtype=torch.float).item(),
+            'synth_loss': losses[synth_idx].mean().item(),
+            'synth_acc': correct[synth_idx].mean(dtype=torch.float).item(),
+        }
 
 
     def _train_module_epoch(self, module: nn.Module, dataset: Dataset, ep_ages_dataset: Optional[Dataset], module_is_ensemble: bool = False):
@@ -128,20 +144,10 @@ class PrefPPOCallback(BasePrefCallback):
                 pred_rewards = self.ensemble_agg_fn(pred_rewards)
 
             losses, correct = self._compute_loss(pred_rewards, preferences, weights)
-            losses.backward()
+            losses.sum().backward()
             self.rew_optimizer.step()
 
-            real_idx = torch.argwhere(mask == 0)
-            synth_idx = torch.argwhere(mask == 1)
-
-            metrics.append({
-                'loss': losses.mean().item(),
-                'accuracy': correct.mean().item(),
-                'real_loss': losses[real_idx].mean().item(),
-                'real_acc': correct[real_idx].mean().item(),
-                'synth_loss': losses[synth_idx].mean().item(),
-                'synth_acc': correct[synth_idx].mean().item(),
-            })
+            metrics.append(self._compute_batch_metrics(losses, correct, mask))
 
         if ep_ages_dataset is None:
             return metrics
@@ -189,6 +195,8 @@ class PrefPPOCallback(BasePrefCallback):
         dataset = self._get_dataset()
         if self.num_samples_ep_age is not None:
             ep_ages_dataset = self._get_episode_ages_dataset(self.num_samples_ep_age)
+        else:
+            ep_ages_dataset = None
 
         if not self.train_members_sequential:
             metrics = self._train_module_epoch(self.reward_model, dataset, ep_ages_dataset, module_is_ensemble=True)
@@ -217,14 +225,14 @@ class PrefPPOCallback(BasePrefCallback):
         metrics = []
         for epoch in range(self.n_epochs_reward):
             epoch_metrics = self._train_reward_model_epoch()
-            metrics.extend(epoch_metrics)
+            metrics.append(epoch_metrics)
 
-            epoch_accuracy = np.mean([batch['accuracy'] for batch in epoch_metrics if 'accuracy' in batch])
+            epoch_accuracy = np.mean([batch['accuracy'] for member in epoch_metrics for batch in member if 'accuracy' in batch])
             if epoch_accuracy > self.train_acc_threshold_reward:
                 break
 
         grouped_metrics = {}
-        for batch_metrics in metrics:
+        for batch_metrics in [batch for epoch in metrics for member in epoch for batch in member]:
             for name, value in batch_metrics.items():
                 grouped_metrics[name].append(value)
 

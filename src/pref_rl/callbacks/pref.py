@@ -128,9 +128,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         segment_dim = obs_size + act_size
         self.feed_buffer = FeedbackBuffer(self.feed_buf_size, self.segment_size, segment_dim, self.device)
 
-        if self.synth_enabled:
-            self.synth_teacher = TemporalSynthesizer(self.segment_size, obs_size, act_size, **self.synth_teacher_kwargs)
-            self.synth_buffer = FeedbackBuffer(self.synth_buffer_size, self.segment_size, segment_dim, self.device)
+        self.synthesizer = TemporalSynthesizer(self.segment_size, obs_size, act_size, **self.synth_teacher_kwargs)
+        self.synth_buffer = FeedbackBuffer(self.synth_buffer_size, self.segment_size, segment_dim, self.device)
 
         self.total_timesteps = self.model._total_timesteps
 
@@ -201,7 +200,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         episode_ages = self.buffer.get_episode_ages()
         num_samples = int(feed_batch_size * self.synth_ratio)
 
-        segments, preferences, metrics, weights = self.synth_teacher.generate_pairs(episodes, episode_ages, num_samples, self.num_timesteps)
+        segments, preferences, metrics, weights = self.synthesizer.generate_pairs(episodes, episode_ages, num_samples, self.num_timesteps)
         self._log_metrics(metrics, prefix='synth/')
         
         num_added = self.synth_buffer.add(segments, preferences, weights)
