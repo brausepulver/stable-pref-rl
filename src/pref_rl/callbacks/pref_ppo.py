@@ -317,30 +317,7 @@ class PrefPPOCallback(BasePrefCallback):
         return {**metrics, **calibration_metrics}
 
 
-    def _calculate_corr_coef(self, pred_rewards: torch.Tensor, gt_rewards: torch.Tensor):
-        gt_returns = einops.reduce(gt_rewards, 'pair batch segment -> (pair batch)', 'sum')
-        pred_returns = einops.reduce(pred_rewards, 'pair batch segment -> (pair batch)', 'sum')
-        stacked = torch.stack([gt_returns, pred_returns])
-        corr_matrix = torch.corrcoef(stacked)
-        return corr_matrix[0, 1]
-
-
-    def _compute_correlation(self, segments: torch.Tensor, rewards: torch.Tensor):
-        rewards = einops.rearrange(rewards, 'pair batch segment -> batch pair segment')
-        dataset = TensorDataset(segments, rewards)
-        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, pin_memory=self.device.type == 'cuda')
-        
-        correlations = []
-        for batch_segments, batch_rewards in dataloader:
-            ensemble_preds = self.reward_model(batch_segments.to(self.device))
-            ensemble_rewards = self.ensemble_agg_fn(ensemble_preds).squeeze(-1)
-            corr = self._calculate_corr_coef(ensemble_rewards, batch_rewards.to(self.device))
-            correlations.append(corr)
-        
-        return np.mean(correlations) if correlations else None
-
-
-    def _validate_on_segments(self, segments: torch.Tensor, rewards: torch.Tensor, preferences: torch.Tensor, compute_correlation: bool = False):
+    def _validate_on_segments(self, segments: torch.Tensor, rewards: torch.Tensor, preferences: torch.Tensor):
         self.reward_model.eval()
         
         dataset = TensorDataset(segments, preferences)
@@ -352,32 +329,25 @@ class PrefPPOCallback(BasePrefCallback):
             batch_metrics_list.append(batch_metrics)
         
         results = self._aggregate_metrics(batch_metrics_list)
-        
-        if compute_correlation:
-            results['corr_coef'] = self._compute_correlation(segments, rewards)
-        else:
-            results['corr_coef'] = None
-        
         return results
 
 
-    def _validate_on_episodes(self, episodes, episode_ages, size: int, compute_correlation: bool = False, compute_sampler_metrics: bool = True):
+    def _validate_on_episodes(self, episodes, episode_ages, size: int, compute_sampler_metrics: bool = True):
         schedule_state = self._create_schedule_state()
         segments, rewards, sampler_metrics = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics, schedule_state=schedule_state)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
         return {
-            **self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation),
+            **self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences),
             'sampler_metrics': sampler_metrics
         }
 
 
     def _log_validation_metrics(self, metrics: dict, prefix: str = ''):
-        scoped_metrics = {f'reward_model/eval/{prefix}{key}': value for key, value in metrics.items() if value is not None and key != 'sampler_metrics'}
-
         if self.log_sampler_metrics and metrics.get('sampler_metrics') is not None:
             self._log_metrics_stats(metrics.pop('sampler_metrics'), prefix=prefix)
 
-        self.logger.record_with_progress(scoped_metrics, self.num_feed, self.training_progress)
+        scoped_metrics = {key: value for key, value in metrics.items() if key != 'sampler_metrics' and value is not None}
+        self.logger.record_with_progress(scoped_metrics, self.num_feed, self.training_progress, prefix=f'reward_model/eval/{prefix}')
 
 
     def _validate_train(self):
