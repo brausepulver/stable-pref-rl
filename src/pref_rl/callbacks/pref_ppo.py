@@ -168,21 +168,6 @@ class PrefPPOCallback(BasePrefCallback):
         return ConcatDataset([real_dataset, synth_dataset])
 
 
-    def _get_episode_ages_dataset(self, num_samples: int):
-        episodes = self.buffer.get_episodes()
-        episode_ages = self.buffer.get_episode_ages()
-        normalized_ep_ages = episode_ages / self.model._total_timesteps
-
-        ep_indices, segments, _ = self.uniform_sampler.sample_segments(episodes, num_samples)
-        segment_ages = normalized_ep_ages[ep_indices]
-        return TensorDataset(segments, segment_ages)
-
-
-    def _get_subset_for_member(self, dataset: Dataset, member_idx: int, length: int, ensemble_size: int):
-        indices = range(member_idx, length, ensemble_size)
-        return Subset(dataset, indices)
-
-
     def _train_reward_model_epoch(self):
         dataset = self._get_dataset()
         if self.num_samples_ep_age is not None:
