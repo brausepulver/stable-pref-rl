@@ -108,23 +108,31 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _compute_batch_metrics(self, losses: torch.Tensor, correct: torch.Tensor, mask: torch.Tensor):
-        real_idx = torch.argwhere(mask == 0)
-        synth_idx = torch.argwhere(mask == 1)
+        real_mask = mask == 0
+        synth_mask = mask == 1
         
         metrics = {
             'loss': losses.mean().item(),
-            'loss_correct': losses[correct].mean().item(),
-            'loss_incorrect': losses[~correct].mean().item(),
             'accuracy': correct.mean(dtype=torch.float).item(),
-            'real_loss': losses[real_idx].mean().item(),
-            'real_acc': correct[real_idx].mean(dtype=torch.float).item(),
         }
 
-        if synth_idx.numel():
-            metrics |= {
-                'synth_loss': losses[synth_idx].mean().item(),
-                'synth_acc': correct[synth_idx].mean(dtype=torch.float).item(),
-            }
+        if real_mask.any():
+            metrics.update({
+                'real_loss': losses[real_mask].mean().item(),
+                'real_acc': correct[real_mask].mean(dtype=torch.float).item(),
+            })
+
+        if correct.any():
+            metrics['loss_correct'] = losses[correct].mean().item()
+        
+        if (~correct).any():
+            metrics['loss_incorrect'] = losses[~correct].mean().item()
+
+        if synth_mask.any():
+            metrics.update({
+                'synth_loss': losses[synth_mask].mean().item(),
+                'synth_acc': correct[synth_mask].mean(dtype=torch.float).item(),
+            })
 
         return metrics
 

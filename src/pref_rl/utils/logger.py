@@ -15,9 +15,9 @@ class PrefLogger(Logger):
         try:
             import wandb
             if wandb.run is not None:
-                self.run = wandb.run
-                self.run.define_metric(step_metric='pref/training_progress', name='pref/*')
-                self.run.define_metric(step_metric='pref/num_feed', name='pref/*')
+                self.wandb_run = wandb.run
+                self.wandb_run.define_metric(step_metric='pref/training_progress', name='pref/*')
+                self.wandb_run.define_metric(step_metric='pref/num_feed', name='pref/*')
         except ImportError:
             pass
     
@@ -34,8 +34,7 @@ class PrefLogger(Logger):
 
         # Log to standard logger
         for key, value in prefixed_metrics.items():
-            if value is not None:
-                self.record(key, value)
+            self.record(key, value)
         
         # Log to wandb with progress context
         if self.wandb_run:

@@ -194,7 +194,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self._update_training_progress()
         
         metrics_to_log = {
-            'pref/feed_buffer_pos': self.num_feed,
+            'pref/feed_buffer_pos': self.feed_buffer.position,
             'pref/feed_buffer_size': self.feed_buffer.size,
         }
         self.logger.record_with_progress(metrics_to_log, self.num_feed, self.training_progress)
