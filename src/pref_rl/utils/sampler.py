@@ -113,6 +113,7 @@ class Sampler:
             'entropy': EntropyMetric(),
         }
 
+
     def _get_episode_indices(self, valid_episodes: list, num_samples: int, stratified: bool = False):
         if stratified:
             episodes_count = len(valid_episodes)
@@ -127,6 +128,7 @@ class Sampler:
             ep_indices = torch.randint(0, len(valid_episodes), (2 * num_samples,))
         
         return ep_indices
+
 
     def _get_segments(self, episodes: list, ep_indices: torch.Tensor):
         segments = []
@@ -143,6 +145,7 @@ class Sampler:
 
         return torch.stack(segments)
 
+
     def sample_segments(self, episodes: list, num_samples: int, stratified: bool = False):
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
         if len(valid_episodes) == 0:
@@ -155,6 +158,7 @@ class Sampler:
         state_actions = torch.cat([obs, act], dim=-1)
         return ep_indices, state_actions, gt_rewards
 
+
     def compute_logging_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[ScheduleState] = None):
         metrics = {}
         
@@ -166,6 +170,7 @@ class Sampler:
                 metrics[metric_name] = metric.compute(state_action_pairs, reward_model, schedule_state)
         
         return metrics
+
 
     def sample_pairs(self, episodes: list, episode_ages: list, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, compute_uniform_metrics: bool = True, schedule_state: Optional[ScheduleState] = None):
         method = getattr(self.sampling_metric, 'name', 'uniform')

@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset, ConcatDataset
 
 from .pref import BasePrefCallback
 from ..utils.data import MaskedDataset
-from ..utils.reward_models import RewardModel, MultiHeadMember, MultiHeadRewardModel
+from ..utils.reward_models import RewardModel
 from ..utils.sampler import NoValidEpisodesError
 from ..utils.schedules import PrefPPOScheduleState
 from ..utils.teacher import Teacher
@@ -33,7 +33,6 @@ class PrefPPOCallback(BasePrefCallback):
         log_sampler_metrics: bool = True,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
-        num_samples_ep_age: Optional[int] = None,
         **kwargs
     ):
         super().__init__(log_sampler_metrics=log_sampler_metrics, **kwargs)
@@ -49,11 +48,9 @@ class PrefPPOCallback(BasePrefCallback):
         self.validate_on_held_out = validate_on_held_out
         self.log_sampler_metrics = log_sampler_metrics
         self.ensemble_agg_fn = ensemble_agg_fn
-        self.num_samples_ep_age = num_samples_ep_age
 
         self.reward_model_cls = {
             'reward_model': RewardModel,
-            'multi_head_reward_model': MultiHeadRewardModel,
         }[reward_model_kind]
 
         self.held_out_data_path = (
@@ -132,7 +129,7 @@ class PrefPPOCallback(BasePrefCallback):
         return metrics
 
 
-    def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset, ep_ages_dataset: Optional[Dataset]):
+    def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset):
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         metrics = []
 
@@ -147,24 +144,6 @@ class PrefPPOCallback(BasePrefCallback):
 
             metrics.append(self._compute_batch_metrics(losses, correct, mask))
 
-        if ep_ages_dataset is None:
-            return metrics
-
-        ages_dataloader = DataLoader(ep_ages_dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
-
-        for segments, segment_ages in ages_dataloader:
-            optimizer.zero_grad()
-
-            assert isinstance(member, MultiHeadMember)
-            predictions = member.auxiliary(segments)
-
-            criterion = nn.MSELoss()
-            loss = criterion(predictions, segment_ages)
-            loss.backward()
-            optimizer.step()
-
-            metrics.append({'age_loss': loss})
-
         return metrics
 
 
@@ -176,16 +155,13 @@ class PrefPPOCallback(BasePrefCallback):
 
     def _train_reward_model_epoch(self):
         dataset = self._get_dataset()
-        if self.num_samples_ep_age is not None:
-            ep_ages_dataset = self._get_episode_ages_dataset(self.num_samples_ep_age)
-        else:
-            ep_ages_dataset = None
-
         metrics = []
+
         for index, member in enumerate(self.reward_model.members):
             optimizer = self.rew_optimizers[index]
-            member_metrics = self._train_member_epoch(member, optimizer, dataset, ep_ages_dataset)
+            member_metrics = self._train_member_epoch(member, optimizer, dataset)
             metrics.append(member_metrics)
+
         return metrics
 
 
@@ -285,6 +261,7 @@ class PrefPPOCallback(BasePrefCallback):
         metrics = self._average_metrics(self._validate(dataset))
         self._log_validation_metrics({**metrics, 'sampler_metrics': sampler_metrics}, prefix='held_out/')
 
+
     def _predict_rewards(self):
         self.reward_model.eval()
 
@@ -292,12 +269,14 @@ class PrefPPOCallback(BasePrefCallback):
         state_actions = torch.cat([obs, act], dim=-1).to(self.device)
 
         with torch.no_grad():
-            ensemble_rewards = self.reward_model(state_actions)
-            for env_idx in range(len(ensemble_rewards[0])):
+            member_rewards = self.reward_model(state_actions)
+            for env_idx in range(len(member_rewards[0])):
                 self.ensemble_reward_buffer[env_idx].append(
-                    ensemble_rewards[:, env_idx, 0].cpu().numpy()
+                    member_rewards[:, env_idx, 0].cpu().numpy()
                 )
-            return self.ensemble_agg_fn(ensemble_rewards)
+            pred_rewards = self.ensemble_agg_fn(member_rewards)
+
+        return pred_rewards
 
 
     def _save_returns(self, infos: list):
