@@ -21,6 +21,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         margins_stats_window_size: int = 100,
         sampler: str = 'uniform',
         sampler_kwargs: dict = {},
+        sample_uniform_on_first_train: bool = True,  # For consistency with B-Pref
         log_sampler_metrics: bool = True,
         teacher: str = 'oracle',
         teacher_kwargs: dict = {},
@@ -44,6 +45,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.margins_stats_window_size = margins_stats_window_size
         self.sampler_metric = sampler
         self.sampler_kwargs = sampler_kwargs
+        self.sample_uniform_on_first_train = sample_uniform_on_first_train
         self.log_sampler_metrics = log_sampler_metrics
         self.train_teacher_kind = teacher
         self.teacher_kwargs = teacher_kwargs
@@ -228,7 +230,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _do_train(self, num_samples: int):
-        sampler = self.sampler if self.has_trained else self.uniform_sampler
+        if self.sample_uniform_on_first_train and not self.has_trained:
+            sampler = self.uniform_sampler
+        else:
+            sampler = self.sampler
+
         if num_samples > 0:
             self._expand_data(sampler, num_samples)
 
