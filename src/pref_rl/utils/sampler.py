@@ -16,13 +16,17 @@ class NoValidEpisodesError(ValueError):
 
 class BaseSamplerMetric(ABC):
     @abstractmethod
-    def compute(self, split_state_actions: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[ScheduleState]) -> torch.Tensor:
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[ScheduleState]) -> torch.Tensor:
         pass
 
     @property
     @abstractmethod
     def name(self) -> str:
         pass
+
+    def get_logging_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[ScheduleState]) -> dict[str, torch.Tensor]:
+        """Return all metrics this sampler wants to log."""
+        return {self.name: self.compute(state_action_pairs, reward_model, schedule_state)}
 
 
 class DisagreementMetric(BaseSamplerMetric):
@@ -70,12 +74,30 @@ class CompositeMetric(BaseSamplerMetric):
     def name(self) -> str:
         return self._name
 
-    def compute(self, split_state_actions, reward_model, schedule_state):
+    def _compute_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: ScheduleState):
+        return {name: metric.compute(state_action_pairs, reward_model, schedule_state) for name, metric in self.metrics}
+
+    def _aggregate_metrics(self, computed_metrics: dict[str, torch.Tensor], schedule_state: ScheduleState):
         weighted_values = []
-        for metric_name, metric in self.metrics.items():
-            weight = self.weights[metric_name](schedule_state.progress_remaining, schedule_state)
-            weighted_values.append(weight * metric.compute(split_state_actions, reward_model, schedule_state))
-        return torch.stack(weighted_values).sum(dim=0)
+        for name, value in computed_metrics.items():
+            weight = self.weights[name](schedule_state.progress_remaining, schedule_state)
+            weighted_values.append(weight * value)
+        weighted_value = torch.stack(weighted_values).sum(dim=0)
+        return weighted_value
+
+    def compute(self, state_action_pairs, reward_model, schedule_state):
+        computed_metrics = self._compute_metrics(state_action_pairs, reward_model, schedule_state)
+        weighted_value = self._aggregate_metrics(computed_metrics, schedule_state)
+        return weighted_value
+
+    def get_logging_metrics(self, state_action_pairs, reward_model, schedule_state):
+        computed_metrics = self._compute_metrics(state_action_pairs, reward_model, schedule_state)
+        logging_metrics = computed_metrics
+        
+        # Add the composite metric itself
+        logging_metrics[self.name] = self._aggregate_metrics(computed_metrics, schedule_state)
+        
+        return logging_metrics
 
 
 class Sampler:
@@ -134,22 +156,14 @@ class Sampler:
         return ep_indices, state_actions, gt_rewards
 
     def compute_logging_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[ScheduleState] = None):
-        metrics = {
-            metric_name: metric.compute(state_action_pairs, reward_model, schedule_state)
-            for metric_name, metric in self.logging_metrics.items()
-        }
-
-        if not self.sampling_metric:
-            return metrics
+        metrics = {}
         
-        if isinstance(self.sampling_metric, CompositeMetric):
-            metrics[self.sampling_metric.name] = self.sampling_metric.compute(state_action_pairs, reward_model, schedule_state)
-            for metric_name, metric in self.sampling_metric.metrics.items():
-                progress_remaining = schedule_state.progress_remaining if schedule_state else 0
-                weight = self.sampling_metric.weight_schedules[metric_name](progress_remaining, schedule_state)
-                metrics[f"{self.sampling_metric.name}_{metric_name}"] = weight * metric.compute(state_action_pairs, reward_model, schedule_state)
-        elif self.sampling_metric.name not in metrics:
-            metrics[self.sampling_metric.name] = self.sampling_metric.compute(state_action_pairs, reward_model, schedule_state)
+        if self.sampling_metric:
+            metrics.update(self.sampling_metric.get_logging_metrics(state_action_pairs, reward_model, schedule_state))
+
+        for metric_name, metric in self.logging_metrics.items():
+            if metric_name not in metrics:
+                metrics[metric_name] = metric.compute(state_action_pairs, reward_model, schedule_state)
         
         return metrics
 
