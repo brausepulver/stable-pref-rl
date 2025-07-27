@@ -108,16 +108,22 @@ class PrefPPOCallback(BasePrefCallback):
         real_idx = torch.argwhere(mask == 0)
         synth_idx = torch.argwhere(mask == 1)
         
-        return {
+        metrics = {
             'loss': losses.mean().item(),
             'loss_correct': losses[correct].mean().item(),
             'loss_incorrect': losses[~correct].mean().item(),
             'accuracy': correct.mean(dtype=torch.float).item(),
             'real_loss': losses[real_idx].mean().item(),
             'real_acc': correct[real_idx].mean(dtype=torch.float).item(),
-            'synth_loss': losses[synth_idx].mean().item(),
-            'synth_acc': correct[synth_idx].mean(dtype=torch.float).item(),
         }
+
+        if synth_idx.numel():
+            metrics |= {
+                'synth_loss': losses[synth_idx].mean().item(),
+                'synth_acc': correct[synth_idx].mean(dtype=torch.float).item(),
+            }
+
+        return metrics
 
 
     def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset, ep_ages_dataset: Optional[Dataset]):
@@ -192,6 +198,16 @@ class PrefPPOCallback(BasePrefCallback):
         return metrics
 
 
+    def _average_metrics(self, metrics: list):
+        grouped_metrics = defaultdict(list)
+        for batch_metrics in metrics:
+            for name, value in batch_metrics.items():
+                grouped_metrics[name].append(value)
+
+        avg_metrics = {key: np.mean(value) for key, value in grouped_metrics.items()}
+        return avg_metrics
+
+
     def _train_predictor(self):
         self.reward_model.train()
 
@@ -204,17 +220,10 @@ class PrefPPOCallback(BasePrefCallback):
             if epoch_accuracy > self.train_acc_threshold_reward:
                 break
 
-        grouped_metrics = defaultdict(list)
-        for batch_metrics in [batch for epoch in metrics for member in epoch for batch in member]:
-            for name, value in batch_metrics.items():
-                grouped_metrics[name].append(value)
-
-        avg_metrics = {key: np.mean(value) for key, value in grouped_metrics.items()}
-        all_metrics = avg_metrics | {
-            'epochs': epoch + 1,
-        }
-        log_metrics = {f"reward_model/train/{name}": value for name, value in all_metrics.items()}
-        self.logger.record_with_progress(log_metrics, self.num_feed, self.training_progress)
+        flat_metrics = [batch for epoch in metrics for member in epoch for batch in member]
+        avg_metrics = self._average_metrics(flat_metrics)
+        log_metrics = avg_metrics | {'epochs': epoch + 1}
+        self.logger.record_with_progress(log_metrics, self.num_feed, self.training_progress, prefix="reward_model/train/")
 
         with torch.no_grad():
             if self.validate_on_train:
@@ -223,74 +232,25 @@ class PrefPPOCallback(BasePrefCallback):
                 self._validate_held_out()
 
 
-    def _compute_batch_metrics_validation(self, segments: torch.Tensor, preferences: torch.Tensor):
-        segments = segments.to(self.device)
-        preferences = preferences.to(self.device)
-        ensemble_preds = self.reward_model(segments)
-        
-        member_metrics = []
-        for member_pred in ensemble_preds:
-            loss, correct = self._compute_loss(member_pred, preferences)
-            member_metrics.append({
-                'loss': loss.mean().item(),
-                'accuracy': correct.mean(dtype=torch.float).item(),
-            })
-        
-        ensemble_pred = self.ensemble_agg_fn(ensemble_preds)
-        loss, correct = self._compute_loss(ensemble_pred, preferences)
-        return {
-            'ensemble': {
-                'loss': loss.mean().item(),
-                'accuracy': correct.mean(dtype=torch.float).item()
-            },
-            'members': member_metrics
-        }
+    def _validate(self, dataset: Dataset):
+        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
+        metrics = []
 
+        for segments, preferences, weights, mask in dataloader:
+            pred_rewards = self.ensemble_agg_fn(self.reward_model(segments))
+            losses, correct = self._compute_loss(pred_rewards, preferences, weights)
+            metrics.append(self._compute_batch_metrics(losses, correct, mask))
 
-    def _aggregate_metrics(self, batch_metrics_list: list):
-        ensemble_metrics = [b['ensemble'] for b in batch_metrics_list]
-        member_metrics = [m for b in batch_metrics_list for m in b['members']]
-        
-        def avg_not_none(metrics_list, key):
-            values = [m[key] for m in metrics_list if m.get(key) is not None]
-            return np.mean(values) if values else 0
-    
-        metrics = {
-            'loss': np.mean([m['loss'] for m in ensemble_metrics]),
-            'accuracy': np.mean([m['accuracy'] for m in ensemble_metrics]),
-            'member_loss': np.mean([m['loss'] for m in member_metrics]),
-            'member_accuracy': np.mean([m['accuracy'] for m in member_metrics]),
-        }
-        calibration_metrics = {
-            'conf_good': avg_not_none(ensemble_metrics, 'confidence_correct'),
-            'conf_bad': avg_not_none(ensemble_metrics, 'confidence_incorrect'),
-            'member_conf_good': avg_not_none(member_metrics, 'confidence_correct'),
-            'member_conf_bad': avg_not_none(member_metrics, 'confidence_incorrect'),
-        }
-        return {**metrics, **calibration_metrics}
-
-
-    def _validate_on_segments(self, segments: torch.Tensor, rewards: torch.Tensor, preferences: torch.Tensor):
-        self.reward_model.eval()
-        
-        dataset = TensorDataset(segments, preferences)
-        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, pin_memory=self.device.type == 'cuda')
-        
-        batch_metrics_list = []
-        for batch_segments, batch_preferences in dataloader:
-            batch_metrics = self._compute_batch_metrics_validation(batch_segments, batch_preferences)
-            batch_metrics_list.append(batch_metrics)
-        
-        results = self._aggregate_metrics(batch_metrics_list)
-        return results
+        return metrics
 
 
     def _validate_on_episodes(self, episodes, episode_ages, size: int, compute_sampler_metrics: bool = True):
         schedule_state = self._create_schedule_state()
         segments, rewards, sampler_metrics = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics, schedule_state=schedule_state)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
+        dataset = TensorDataset(segments[keep_indices], preferences, torch.ones(len(preferences)), torch.zeros(len(preferences)))
         return {
-            **self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences),
+            **self._validate_on_segments(dataset),
             'sampler_metrics': sampler_metrics
         }
 
@@ -299,8 +259,7 @@ class PrefPPOCallback(BasePrefCallback):
         if self.log_sampler_metrics and metrics.get('sampler_metrics') is not None:
             self._log_metrics_stats(metrics.pop('sampler_metrics'), prefix=prefix)
 
-        scoped_metrics = {key: value for key, value in metrics.items() if key != 'sampler_metrics' and value is not None}
-        self.logger.record_with_progress(scoped_metrics, self.num_feed, self.training_progress, prefix=f'reward_model/eval/{prefix}')
+        self.logger.record_with_progress(metrics, self.num_feed, self.training_progress, prefix=f'reward_model/eval/{prefix}')
 
 
     def _validate_train(self):
@@ -331,7 +290,8 @@ class PrefPPOCallback(BasePrefCallback):
         schedule_state = self._create_schedule_state()
         sampler_metrics = self.sampler.compute_logging_metrics(segments, self.reward_model, schedule_state=schedule_state)
 
-        metrics = self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences)
+        dataset = TensorDataset(segments[keep_indices], preferences, torch.ones(len(preferences)), torch.zeros(len(preferences)))
+        metrics = self._validate(dataset)
         self._log_validation_metrics({**metrics, 'sampler_metrics': sampler_metrics}, prefix='held_out/')
 
     def _predict_rewards(self):
