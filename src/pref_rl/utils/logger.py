@@ -30,27 +30,20 @@ class PrefLogger(Logger):
         :param training_progress: Current training progress (0.0 to 1.0)
         :param prefix: Optional prefix for wandb metric names
         """
+        prefixed_metrics = {f"{prefix}{key}": value for key, value in metrics}
+
         # Log to standard logger
-        for key, value in metrics.items():
+        for key, value in prefixed_metrics.items():
             if value is not None:
                 self.record(key, value)
         
         # Log to wandb with progress context
         if self.wandb_run:
-            wandb_metrics = {}
-            
-            # Add metrics with optional prefix
-            for key, value in metrics.items():
-                if value is not None:
-                    wandb_key = f"{prefix}{key}" if prefix else key
-                    wandb_metrics[wandb_key] = value
-            
-            # Add progress context
-            wandb_metrics.update({
+            wandb_metrics = {
+                **prefixed_metrics,
                 'pref/num_feed': num_feed,
                 'pref/training_progress': training_progress,
-            })
-            
+            }
             self.wandb_run.log(wandb_metrics)
 
 

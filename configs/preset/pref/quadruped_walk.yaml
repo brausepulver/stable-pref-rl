@@ -22,6 +22,7 @@ method:
           value: 1.0
     sampler_kwargs:
       uniform_fraction: 0.0
+    sample_uniform_on_first_train: true
 
     teacher: oracle  # One of oracle, stoc, mistake, skip, equal, myopic
 
