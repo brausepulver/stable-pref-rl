@@ -1,4 +1,3 @@
-from collections import defaultdict
 import einops
 from hydra.utils import to_absolute_path
 import numpy as np
@@ -12,6 +11,7 @@ from .pref import BasePrefCallback
 from ..utils.data import MaskedDataset
 from ..utils.reward_models import RewardModel, MultiHeadMember, MultiHeadRewardModel
 from ..utils.sampler import NoValidEpisodesError
+from ..utils.schedules import PrefPPOScheduleState
 from ..utils.teacher import Teacher
 
 
@@ -65,6 +65,18 @@ class PrefPPOCallback(BasePrefCallback):
         if self.run is not None:
             self.run.define_metric(step_metric='pref/training_progress', name='reward_model/*')
             self.run.define_metric(step_metric='pref/num_feed', name='reward_model/*')
+
+
+    def _create_schedule_state(self):
+        base_state = super()._create_schedule_state()
+        return PrefPPOScheduleState(
+            num_timesteps=base_state.num_timesteps,
+            total_timesteps=base_state.total_timesteps,
+            training_progress=base_state.training_progress,
+            progress_remaining=base_state.progress_remaining,
+            buffer=base_state.buffer,
+            reward_model=self.reward_model
+        )
 
 
     def _init_callback(self):
@@ -353,7 +365,8 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_on_episodes(self, episodes, episode_ages, size: int, compute_correlation: bool = False, compute_sampler_metrics: bool = True):
-        segments, rewards, sampler_metrics = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics)
+        schedule_state = self._create_schedule_state()
+        segments, rewards, sampler_metrics = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics, schedule_state=schedule_state)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
         return {
             **self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences, compute_correlation),
@@ -403,7 +416,8 @@ class PrefPPOCallback(BasePrefCallback):
             """)
         segments, rewards = torch.load(path)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
-        sampler_metrics = self.sampler.compute_logging_metrics(segments, self.reward_model)
+        schedule_state = self._create_schedule_state()
+        sampler_metrics = self.sampler.compute_logging_metrics(segments, self.reward_model, schedule_state=schedule_state)
 
         metrics = self._validate_on_segments(segments[keep_indices], rewards[:, keep_indices], preferences)
         self._log_validation_metrics({**metrics, 'sampler_metrics': sampler_metrics}, prefix='held_out/')

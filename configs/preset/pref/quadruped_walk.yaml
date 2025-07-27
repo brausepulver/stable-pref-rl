@@ -8,7 +8,15 @@ method:
     max_feed: 2_000
     feed_batch_size: 200
 
-    sampler: disagreement
+    sampler:
+      _target_: pref_rl.utils.sampler.CompositeMetric
+      metrics:
+        disagreement:
+          _target_: pref_rl.utils.sampler.DisagreementMetric
+      weights:
+        disagreement:
+          _target_: pref_rl.utils.schedules.ConstantSchedule
+          value: 1.0
     sampler_kwargs:
       uniform_fraction: 0.0
 

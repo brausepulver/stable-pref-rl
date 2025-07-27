@@ -5,11 +5,11 @@ from typing import Callable, Optional
 import torch
 
 from .reward_mod import RewardModifierCallback
-from ..config import ConstantSchedule
 from ..utils.buffers import EpisodeBuffer, FeedbackBuffer
 from ..utils.sampler import DisagreementMetric, EntropyMetric, Sampler
-from ..utils.teacher import Teacher
+from ..utils.schedules import ConstantSchedule, PrefScheduleState
 from ..utils.synthetic import TemporalSynthesizer
+from ..utils.teacher import Teacher
 
 
 class BasePrefCallback(RewardModifierCallback, ABC):
@@ -106,21 +106,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             pass
 
 
-    def _log_metrics(self, sampler_metrics: dict, prefix: str = ''):
-        for metric_name, metric_values in sampler_metrics.items():
-            metric_mean = metric_values.mean().cpu().item()
-            metric_std = metric_values.std().cpu().item()
-
-            self.logger.record(f'reward_model/{prefix}{metric_name}_mean', metric_mean)
-            self.logger.record(f'reward_model/{prefix}{metric_name}_std', metric_std)
-
-            if self.run:
-                self.run.log({
-                    f'reward_model/{prefix}{metric_name}_mean': metric_mean,
-                    f'reward_model/{prefix}{metric_name}_std': metric_std,
-                    'pref/num_feed': self.num_feed,
-                    'pref/training_progress': self.training_progress,
-                })
+    @abstractmethod
+    def _get_predictor(self):
+        raise NotImplementedError
 
 
     def _init_callback(self):
@@ -147,23 +135,47 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.total_timesteps = self.model._total_timesteps
 
 
-    @abstractmethod
-    def _get_predictor(self):
-        raise NotImplementedError
+    def _create_schedule_state(self):
+        progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
+        return PrefScheduleState(
+            num_timesteps=self.num_timesteps,
+            total_timesteps=self.total_timesteps,
+            training_progress=self.training_progress,
+            progress_remaining=progress_remaining,
+            buffer=self.buffer
+        )
+
+
+    def _log_metrics(self, sampler_metrics: dict, prefix: str = ''):
+        for metric_name, metric_values in sampler_metrics.items():
+            metric_mean = metric_values.mean().cpu().item()
+            metric_std = metric_values.std().cpu().item()
+
+            self.logger.record(f'reward_model/{prefix}{metric_name}_mean', metric_mean)
+            self.logger.record(f'reward_model/{prefix}{metric_name}_std', metric_std)
+
+            if self.run:
+                self.run.log({
+                    f'reward_model/{prefix}{metric_name}_mean': metric_mean,
+                    f'reward_model/{prefix}{metric_name}_std': metric_std,
+                    'pref/num_feed': self.num_feed,
+                    'pref/training_progress': self.training_progress,
+                })
 
 
     def _sample_segments(self, sampler: Sampler, episodes, episode_ages, num_samples, reward_model):
         num_uniform = int(num_samples * self.uniform_frac)
         num_specific = num_samples - num_uniform
 
-        state_actions, rewards, _ = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model)
+        schedule_state = self._create_schedule_state()
+        state_actions, rewards, _ = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model, schedule_state=schedule_state)
 
         if num_uniform > 0:
-            state_actions_uniform, rewards_uniform, _ = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model)
+            state_actions_uniform, rewards_uniform, _ = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model, schedule_state=schedule_state)
             state_actions = torch.cat([state_actions, state_actions_uniform], dim=0)
             rewards = torch.cat([rewards, rewards_uniform], dim=1)
 
-        metrics = sampler.compute_logging_metrics(state_actions, reward_model) if self.log_sampler_metrics else {}
+        metrics = sampler.compute_logging_metrics(state_actions, reward_model, schedule_state=schedule_state) if self.log_sampler_metrics else {}
         return state_actions, rewards, metrics
 
 
@@ -197,12 +209,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _expand_data(self, sampler: Sampler):
-        progress_remaining = 1.0 - float(self.num_timesteps) / float(self.total_timesteps)
-        feed_batch_size = int(self.feed_schedule(
-            progress_remaining,
-            num_timesteps=self.num_timesteps,
-            total_timesteps=self.total_timesteps
-        ))
+        schedule_state = self._create_schedule_state()
+        feed_batch_size = int(self.feed_schedule(schedule_state.progress_remaining, schedule_state))
 
         num_added = self._expand_real_data(sampler, feed_batch_size)
         self.num_feed += num_added
