@@ -7,86 +7,66 @@ import torch
 from .reward_mod import RewardModifierCallback
 from ..utils.buffers import EpisodeBuffer, FeedbackBuffer
 from ..utils.sampler import DisagreementMetric, EntropyMetric, Sampler
-from ..utils.schedules import ConstantSchedule, PrefScheduleState
+from ..utils.schedules import PrefScheduleState
 from ..utils.synthetic import TemporalSynthesizer
+from ..utils.train_schedules import TrainingSchedule
 from ..utils.teacher import Teacher
 
 
 class BasePrefCallback(RewardModifierCallback, ABC):
     def __init__(self,
-        device: str = 'cpu',
-        n_steps_reward: int = 32_000,
-        ann_buffer_size_eps: int | None = None,
-        sampler: str = 'uniform',
+        schedule: TrainingSchedule,
         segment_size: int = 50,
-        max_feed: int = 2_000,
-        feed_buffer_size: int | None = None,
-        feed_batch_size: int | None = 200,
-        feed_schedule: Callable | None = None,
+        ann_buffer_size_eps: int | None = None,
+        margins_stats_window_size: int = 100,
+        sampler: str = 'uniform',
+        sampler_kwargs: dict = {},
+        log_sampler_metrics: bool = True,
         teacher: str = 'oracle',
         teacher_kwargs: dict = {},
-        log_prefix='pref/',
-        n_steps_first_train: int | None = None,
-        n_steps_last_train: int | None = None,
-        on_first_trained: Callable | None = None,
-        margins_stats_window_size: int = 100,
-        on_trained: Callable | None = None,
-        log_sampler_metrics: bool = True,
-        sampler_kwargs: dict = {},
-        save_episode_data: bool = False,
         synth_ratio: Optional[float] = None,
         synth_start_step: Optional[int] = None,
         synth_stop_step: Optional[int] = None,
         synth_buffer_size: int | None = None,
         synth_teacher_kwargs: Optional[dict] = None,
+        on_first_trained: Callable | None = None,
+        on_trained: Callable | None = None,
+        save_episode_data: bool = False,
+        log_prefix='pref/',
+        device: str = 'cpu',
         **kwargs
     ):
         super().__init__(log_prefix=log_prefix, **kwargs)
 
-        self.n_steps_reward = n_steps_reward
-        self.ann_buffer_size_eps = ann_buffer_size_eps
-        self.sampling_method = sampler
+        self.schedule = schedule
         self.segment_size = segment_size
-        self.max_feed = max_feed
-        self.feed_buf_size = feed_buffer_size or max_feed
-        self.train_teacher_str = teacher
-        self.teacher_kwargs = teacher_kwargs
-        self.n_steps_first_train = n_steps_first_train
-        self.n_steps_last_train = n_steps_last_train
-        self.on_first_trained = on_first_trained
+        self.ann_buffer_size_eps = ann_buffer_size_eps
         self.margins_stats_window_size = margins_stats_window_size
-        self.on_trained = on_trained
-        self.log_sampler_metrics = log_sampler_metrics
+        self.sampler_metric = sampler
         self.sampler_kwargs = sampler_kwargs
-        self.save_episode_data = save_episode_data
+        self.log_sampler_metrics = log_sampler_metrics
+        self.train_teacher_kind = teacher
+        self.teacher_kwargs = teacher_kwargs
         self.synth_ratio = synth_ratio or 0
         self.synth_enabled = synth_ratio and synth_ratio > 0
         self.synth_start_step = synth_start_step or 0
         self.synth_stop_step = synth_stop_step or float('inf')
         self.synth_buffer_size = synth_buffer_size
         self.synth_teacher_kwargs = synth_teacher_kwargs or {}
+        self.on_first_trained = on_first_trained
+        self.on_trained = on_trained
+        self.save_episode_data = save_episode_data
+        self.uniform_frac = self.sampler_kwargs.get('uniform_fraction', 0.0) if self.sampler_metric != 'uniform' else 0.0
 
         if self.synth_enabled and not synth_buffer_size:
             raise ValueError('synth_buffer_size must be provided if synth_ratio is set')
-
-        self.uniform_frac = self.sampler_kwargs.get('uniform_fraction', 0.0) if self.sampling_method != 'uniform' else 0.0
-
-        if not feed_schedule and not feed_batch_size:
-            raise ValueError('Either feed_batch_size or feed_schedule must be set')
-        if feed_batch_size and self.feed_buf_size and self.feed_buf_size < feed_batch_size:
-            raise ValueError('feed_buffer_size must be greater than or equal to feed_batch_size')
-
-        self.feed_schedule = feed_schedule or ConstantSchedule(feed_batch_size)
-
-        assert self.ann_buffer_size_eps is None or self.margins_stats_window_size <= self.ann_buffer_size_eps
+        if self.ann_buffer_size_eps and self.margins_stats_window_size >= self.ann_buffer_size_eps:
+            raise ValueError('margin_stats_window_size must be less than or equal to ann_buffer_size_eps')
 
         self.steps_since_train = 0
         self.has_trained = False
-        self.num_feed = 0
         self.training_progress = 0.0
-        self.keep_training = None
-        self.n_steps_train_total = None
-        self.num_synth = 0
+        self.n_steps_train_end = None
 
         self.device = torch.device(
             device or
@@ -101,19 +81,25 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
+    @property
+    def num_feed(self):
+        return self.feed_buffer.position
+
+
     def _init_callback(self):
-        sampling_metrics = {
-            'disagreement': DisagreementMetric,
-            'entropy': EntropyMetric,
-        }
-        sampling_metric_cls = sampling_metrics.get(self.sampling_method, None)
-        sampling_metric = sampling_metric_cls() if sampling_metric_cls else None
+        if isinstance(self.sampler_metric, str):
+            metric_classes = {
+                'disagreement': DisagreementMetric,
+                'entropy': EntropyMetric,
+            }
+            metric_class = metric_classes.get(self.sampler_metric)
+            self.sampler_metric = metric_class() if metric_class else None
 
         obs_size, act_size = self._get_input_sizes()
         self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps, keep_all_eps=self.save_episode_data)
-        self.sampler = Sampler(self.segment_size, obs_size, act_size, sampling_metric)
+        self.sampler = Sampler(self.segment_size, obs_size, act_size, self.sampler_metric)
         self.uniform_sampler = Sampler(self.segment_size, obs_size, act_size)
-        self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher_str, teacher_kwargs=self.teacher_kwargs)
+        self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher_kind, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
         self.feed_buffer = FeedbackBuffer(self.feed_buf_size, self.segment_size, segment_dim, self.device)
@@ -131,17 +117,19 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             total_timesteps=self.total_timesteps,
             training_progress=self.training_progress,
             progress_remaining=progress_remaining,
-            buffer=self.buffer
+            has_trained=self.has_trained,
+            steps_since_train=self.steps_since_train,
+            buffer=self.buffer,
+            feed_buffer=self.feed_buffer,
+            synth_buffer=self.synth_buffer,
         )
 
 
     def _log_metrics_stats(self, metrics: dict, prefix: str = ''):
         metrics_stats = {}
-
         for metric_name, metric_values in metrics.items():
             metrics_stats[f'{metric_name}_mean'] = metric_values.mean().cpu().item()
             metrics_stats[f'{metric_name}_std'] = metric_values.std().cpu().item()
-
         self.logger.record_with_progress(metrics_stats, self.num_feed, self.training_progress, prefix=f'reward_model/{prefix}')
 
 
@@ -161,13 +149,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         return state_actions, rewards, metrics
 
 
-    def _expand_real_data(self, sampler: Sampler, feed_batch_size: int):
+    def _expand_real_data(self, sampler: Sampler, num_samples: int):
         episodes = self.buffer.get_episodes()
         episode_ages = self.buffer.get_episode_ages()
-        num_samples = min(feed_batch_size, self.max_feed - self.num_feed)
         reward_model = self._get_predictor()
-
-        state_actions, rewards, sampler_metrics = self._sample_segments(sampler, episodes, episode_ages,num_samples, reward_model)
+        state_actions, rewards, sampler_metrics = self._sample_segments(sampler, episodes, episode_ages, num_samples, reward_model)
 
         if self.log_sampler_metrics and sampler_metrics:
             self._log_metrics_stats(sampler_metrics, prefix='sampler/')
@@ -178,39 +164,42 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         return num_added
 
 
-    def _expand_synth_data(self, feed_batch_size: int):
+    def _expand_synth_data(self, num_samples: int):
         episodes = self.buffer.get_episodes()
         episode_ages = self.buffer.get_episode_ages()
-        num_samples = int(feed_batch_size * self.synth_ratio)
-
         segments, preferences, metrics, weights = self.synthesizer.generate_pairs(episodes, episode_ages, num_samples, self.num_timesteps)
         self._log_metrics_stats(metrics, prefix='synth/')
-        
+
         num_added = self.synth_buffer.add(segments, preferences, weights)
         return num_added
 
 
-    def _expand_data(self, sampler: Sampler):
-        schedule_state = self._create_schedule_state()
-        feed_batch_size = int(self.feed_schedule(schedule_state.progress_remaining, schedule_state))
+    def _update_training_progress(self):
+        if self.n_steps_train_end:
+            self.training_progress = (self.num_timesteps - self.schedule.n_steps_first_train) / self.n_steps_train_end
+        else:
+            self.training_progress = self.num_feed / self.schedule.max_feed
 
-        num_added = self._expand_real_data(sampler, feed_batch_size)
-        self.num_feed += num_added
-        self.training_progress = self.num_feed / self.max_feed
+
+    def _expand_data(self, sampler: Sampler, num_samples: int):
+        self._expand_real_data(sampler, num_samples)
+
+        if self.num_feed == self.schedule.max_feed:
+            self.n_steps_train_end = self.num_timesteps
+
+        self._update_training_progress()
         
         metrics_to_log = {
-            'pref/num_feed': self.num_feed,
-            'pref/training_progress': self.training_progress,
-            'pref/feed_buffer_pos': self.feed_buffer.position,
+            'pref/feed_buffer_pos': self.num_feed,
             'pref/feed_buffer_size': self.feed_buffer.size,
         }
         self.logger.record_with_progress(metrics_to_log, self.num_feed, self.training_progress)
 
         should_collect_synth = self.synth_start_step <= self.num_timesteps <= self.synth_stop_step
         if self.synth_enabled and should_collect_synth:
-            self.num_synth += self._expand_synth_data(feed_batch_size)
+            self._expand_synth_data(num_samples)
             synth_metrics = {
-                'pref/num_synth': self.num_synth,
+                'pref/num_synth': self.synth_buffer.position,
                 'pref/synth_buffer_pos': self.synth_buffer.position,
                 'pref/synth_buffer_size': self.synth_buffer.size,
             }
@@ -222,51 +211,52 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         raise NotImplementedError
 
 
-    def _should_train(self) -> bool:
-        should_start_training = not self.has_trained and self.n_steps_first_train is not None and self.steps_since_train >= self.n_steps_first_train
-        should_train = self.has_trained and self.steps_since_train >= self.n_steps_reward
-        should_stop_training = self.n_steps_last_train is not None and self.num_timesteps >= self.n_steps_last_train
-        return (should_start_training or should_train) and not should_stop_training
+    def _add_steps_to_buffer(self):
+        obs, act, gt_rewards = self._get_current_step()
+        annotations = torch.cat([obs, act, gt_rewards], dim=-1)
+        self.buffer.add(annotations, self.locals['dones'], self.num_timesteps)
+
+
+    def _on_episode_done(self):
+        # Update teacher thresholds
+        recent_eps = list(itertools.islice(reversed(self.buffer.get_episodes()), self.margins_stats_window_size))
+        self.train_teacher.update_thresholds(recent_eps)
+
+        # Log episode metrics
+        episode_metrics = {'pref/num_episodes': len(self.buffer.done_eps)}
+        self.logger.record_with_progress(episode_metrics, self.num_feed, self.training_progress)
+
+
+    def _do_train(self, num_samples: int):
+        sampler = self.sampler if self.has_trained else self.uniform_sampler
+        if num_samples > 0:
+            self._expand_data(sampler, num_samples)
+
+        self._train_predictor()
+        self.steps_since_train = 0
+
+        if self.on_trained:
+            self.on_trained()
+
+        if not self.has_trained:
+            self.has_trained = True
+            if self.on_first_trained: self.on_first_trained()
+
+        self.logger.dump(step=self.num_timesteps)
 
 
     def _on_step(self):
         self.steps_since_train += self.training_env.num_envs
 
-        obs, act, gt_rewards = self._get_current_step()
-        annotations = torch.cat([obs, act, gt_rewards], dim=-1)
-        self.buffer.add(annotations, self.locals['dones'], self.num_timesteps)
+        self._add_steps_to_buffer()
 
         if self.locals['dones'].any():
-            recent_eps = list(itertools.islice(reversed(self.buffer.get_episodes()), self.margins_stats_window_size))
-            self.train_teacher.update_thresholds(recent_eps)
+            self._on_episode_done()
 
-            episode_metrics = {'pref/num_episodes': len(self.buffer.done_eps)}
-            self.logger.record_with_progress(episode_metrics, self.num_feed, self.training_progress)
+        schedule_state = self._create_schedule_state()
+        should_train, num_samples = self.schedule(schedule_state.progress_remaining, schedule_state)
 
-        buffer_has_done = len(self.buffer.done_eps) > 0
-        feedback_left = self.num_feed < self.max_feed
-
-        if self.n_steps_first_train is None and buffer_has_done:
-            self.n_steps_first_train = self.num_timesteps
-
-        if self._should_train() and (feedback_left or self.keep_training):
-            sampler = self.sampler if self.has_trained else self.uniform_sampler
-            if feedback_left:
-                self._expand_data(sampler)
-            self._train_predictor()
-            self.steps_since_train = 0
-
-            if self.on_trained:
-                self.on_trained()
-
-            if not self.has_trained:
-                self.has_trained = True
-                if self.on_first_trained: self.on_first_trained()
-
-            self.logger.dump(step=self.num_timesteps)
-            self.n_steps_train_total = self.num_timesteps - self.n_steps_first_train
-
-        elif self.has_trained and not feedback_left:
-            self.training_progress = (self.num_timesteps - self.n_steps_first_train) / self.n_steps_train_total
+        if should_train:
+            self._do_train(num_samples)
 
         return super()._on_step()

@@ -1,10 +1,10 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Any
 
 import torch.nn as nn
 
-from .buffers import EpisodeBuffer
+from .buffers import EpisodeBuffer, FeedbackBuffer
 
 
 @dataclass
@@ -17,7 +17,11 @@ class ScheduleState(ABC):
 
 @dataclass
 class PrefScheduleState(ScheduleState):
+    has_trained: bool
+    steps_since_train: int
     buffer: EpisodeBuffer
+    feed_buffer: FeedbackBuffer
+    synth_buffer: FeedbackBuffer
 
 
 @dataclass
@@ -26,8 +30,9 @@ class PrefPPOScheduleState(PrefScheduleState):
 
 
 class BaseSchedule(ABC):
-    def __call__(self, progress_remaining: float, state: Optional[ScheduleState] = None):
-        return self.value
+    @abstractmethod
+    def __call__(self, progress_remaining: float, state: Optional[ScheduleState] = None) -> Any:
+        pass
 
 
 class ConstantSchedule(BaseSchedule):

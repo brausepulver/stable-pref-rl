@@ -2,11 +2,14 @@ method:
   pref:
     device: cpu
 
-    n_steps_reward: 32_000
     ann_buffer_size_eps: 100
     segment_size: 50
-    max_feed: 2_000
-    feed_batch_size: 200
+
+    schedule:
+      _target_: pref_rl.train_schedules.BasePrefSchedule
+      n_steps_reward: 32_000
+      max_feed: 2_000
+      feed_batch_size: 200
 
     sampler:
       _target_: pref_rl.utils.sampler.CompositeMetric

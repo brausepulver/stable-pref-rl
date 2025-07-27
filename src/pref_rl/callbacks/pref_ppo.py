@@ -43,7 +43,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.batch_size_reward = batch_size_reward
         self.reward_model_kwargs = reward_model_kwargs
         self.lr_reward = learning_rate_reward
-        self.n_steps_eval_current = n_steps_eval_current or self.n_steps_reward
+        self.n_steps_eval_current = n_steps_eval_current or self.schedule.n_steps_reward
         self.train_members_sequential = train_members_sequential
         self.validate_on_train = validate_on_train
         self.validate_on_current = validate_on_current
