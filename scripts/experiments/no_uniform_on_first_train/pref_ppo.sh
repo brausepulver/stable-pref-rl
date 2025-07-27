@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 
-N_RUNS=${1:-168}
+N_RUNS=${1:-56}
 
 BASE_PARAMS=(
     'hydra.run.dir=outputs/${oc.env:JOB_ID}'
     "preset=pref_ppo/quadruped_walk"
     "training.total_timesteps=2000000"
     "preset.method.clip_range.end=0.2"
-    # "preset.method.save_callback_data=true"
-    # "preset.method.save_episode_data=true"
+    "preset.method.pref.sample_uniform_on_first_train=false"
 )
 
 # Uniform sampling
