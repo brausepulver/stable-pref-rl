@@ -5,6 +5,7 @@ from stable_baselines3.common.callbacks import CallbackList
 from ..callbacks.pref_ppo import PrefPPOCallback
 from ..callbacks.unsupervised import UnsupervisedCallback
 from ..utils.callbacks import get_default_callbacks
+from ..utils.logger import create_pref_logger
 from ..policies.shared import SharedMlpActorCriticPolicy
 
 
@@ -33,7 +34,10 @@ class PrefPPO(PPO):
             self.n_steps = ep_completed + rollout_completed
 
         self._setup_model()
+        self._setup_callbacks()
 
+
+    def _setup_callbacks(self):
         def on_first_trained():
             self.policy.init_weights(self.policy.value_net)
 
@@ -70,6 +74,16 @@ class PrefPPO(PPO):
             self._truncate_buffer(self.rollout_buffer, self.n_steps)
 
         return super().train()
+
+
+    def _setup_logger(self, reset_num_timesteps: bool = True, tb_log_name: str = "run"):
+        logger = create_pref_logger(self.verbose, self.tensorboard_log, tb_log_name, reset_num_timesteps)
+        self.set_logger(logger)
+
+
+    def _setup_learn(self, total_timesteps, callback, reset_num_timesteps=True, tb_log_name="run", progress_bar=False):
+        self._setup_logger(reset_num_timesteps, tb_log_name)
+        return super()._setup_learn(total_timesteps, callback, reset_num_timesteps, tb_log_name, progress_bar)
 
 
     def learn(self, *args, callback=None, **kwargs):
