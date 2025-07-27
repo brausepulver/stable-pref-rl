@@ -24,7 +24,6 @@ class PrefPPOCallback(BasePrefCallback):
         batch_size_reward: int = 128,
         reward_model_kwargs: dict = {},
         n_steps_eval_current: int | None = None,
-        train_members_sequential: bool = True,  # For consistency with B-Pref
         validate_on_train: bool = False,
         validate_on_current: bool = True,
         validate_on_held_out: bool = True,
@@ -43,7 +42,6 @@ class PrefPPOCallback(BasePrefCallback):
         self.reward_model_kwargs = reward_model_kwargs
         self.lr_reward = learning_rate_reward
         self.n_steps_eval_current = n_steps_eval_current or self.schedule.n_steps_reward
-        self.train_members_sequential = train_members_sequential
         self.validate_on_train = validate_on_train
         self.validate_on_current = validate_on_current
         self.validate_on_held_out = validate_on_held_out
@@ -82,15 +80,10 @@ class PrefPPOCallback(BasePrefCallback):
         obs_size, act_size = self._get_input_sizes()
         self.reward_model = self.reward_model_cls(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
 
-        if self.train_members_sequential:
-            optim_params = [member.parameters() for member in self.reward_model.members]
-        else:
-            optim_params = [self.reward_model.parameters()]
-
-        self.rew_optimizer = torch.optim.Adam(
-            [{'params': params} for params in optim_params],
-            lr=self.lr_reward
-        )
+        self.rew_optimizers = [
+            torch.optim.Adam(member.parameters(), lr=self.lr_reward)
+            for member in self.reward_model.members
+        ]
 
         self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
 
@@ -127,20 +120,18 @@ class PrefPPOCallback(BasePrefCallback):
         }
 
 
-    def _train_module_epoch(self, module: nn.Module, dataset: Dataset, ep_ages_dataset: Optional[Dataset], module_is_ensemble: bool = False):
+    def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset, ep_ages_dataset: Optional[Dataset]):
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         metrics = []
 
         for segments, preferences, weights, mask in dataloader:
-            self.rew_optimizer.zero_grad()
+            optimizer.zero_grad()
 
-            pred_rewards = module(segments)
-            if module_is_ensemble:
-                pred_rewards = self.ensemble_agg_fn(pred_rewards)
-
+            pred_rewards = member(segments)
             losses, correct = self._compute_loss(pred_rewards, preferences, weights)
+
             losses.sum().backward()
-            self.rew_optimizer.step()
+            optimizer.step()
 
             metrics.append(self._compute_batch_metrics(losses, correct, mask))
 
@@ -150,15 +141,15 @@ class PrefPPOCallback(BasePrefCallback):
         ages_dataloader = DataLoader(ep_ages_dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
 
         for segments, segment_ages in ages_dataloader:
-            self.rew_optimizer.zero_grad()
+            optimizer.zero_grad()
 
-            assert isinstance(module, MultiHeadMember)
-            predictions = module.auxiliary(segments)
+            assert isinstance(member, MultiHeadMember)
+            predictions = member.auxiliary(segments)
 
             criterion = nn.MSELoss()
             loss = criterion(predictions, segment_ages)
             loss.backward()
-            self.rew_optimizer.step()
+            optimizer.step()
 
             metrics.append({'age_loss': loss})
 
@@ -193,13 +184,10 @@ class PrefPPOCallback(BasePrefCallback):
         else:
             ep_ages_dataset = None
 
-        if not self.train_members_sequential:
-            metrics = self._train_module_epoch(self.reward_model, dataset, ep_ages_dataset, module_is_ensemble=True)
-            return metrics
-
         metrics = []
         for index, member in enumerate(self.reward_model.members):
-            member_metrics = self._train_module_epoch(member, dataset, ep_ages_dataset)
+            optimizer = self.rew_optimizers[index]
+            member_metrics = self._train_member_epoch(member, optimizer, dataset, ep_ages_dataset)
             metrics.append(member_metrics)
         return metrics
 
