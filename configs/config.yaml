@@ -11,6 +11,7 @@ training:
 logging:
   tags: []
   group: null
+  run_eval: false
   eval_freq: 4_000
   n_eval_episodes: 5
   save_best_eval_models: false

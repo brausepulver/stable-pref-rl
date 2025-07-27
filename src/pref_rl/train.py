@@ -75,7 +75,7 @@ def main(cfg: DictConfig) -> None:
 
     # Setup callbacks
     callbacks = [
-        EvalCallback(
+        *([EvalCallback(
             eval_env,
             best_model_save_path="./best_model" if cfg.logging.save_best_eval_models else None,
             log_path="./logs",
@@ -83,7 +83,7 @@ def main(cfg: DictConfig) -> None:
             n_eval_episodes=cfg.logging.n_eval_episodes,
             deterministic=True,
             render=False
-        ),
+        )] if cfg.logging.run_eval else []),
         *([CheckpointCallback(
             save_freq=cfg.logging.checkpoint_freq,
             save_path="./checkpoints",
