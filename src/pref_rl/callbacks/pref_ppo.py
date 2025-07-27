@@ -314,6 +314,7 @@ class PrefPPOCallback(BasePrefCallback):
 
         for env_idx, info in enumerate(infos):
             ep_info = info.get('episode')
+
             if ep_info is None:
                 continue
 
@@ -330,15 +331,6 @@ class PrefPPOCallback(BasePrefCallback):
                 ep_info['pred_r_uncertainty_coef_var'] = np.mean(coef_vars)
                 
                 self.ensemble_reward_buffer[env_idx] = []
-
-                ensemble_metrics = {
-                    'pref/ep_rew_mean': ep_info['pred_r_mean'],
-                    'pref/step_rew_mean': ep_info['pred_r_step'],
-                    'pref/ep_rew_std': ep_info['pred_r_std'],
-                    'reward_model/avg_member_std_ep': ep_info['pred_r_std_member'],
-                    'reward_model/avg_ensemble_std_rew': ep_info['pred_r_uncertainty'],
-                }
-                self.logger.record_with_progress(ensemble_metrics, self.num_feed, self.training_progress)
 
 
     def _on_training_start(self) -> None:
