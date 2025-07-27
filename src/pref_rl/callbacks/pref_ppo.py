@@ -247,48 +247,25 @@ class PrefPPOCallback(BasePrefCallback):
                 self._validate_held_out()
 
 
-    def _calculate_calibration_metrics(self, pred_returns: torch.Tensor, preferences: torch.Tensor):
-        inputs = pred_returns[..., 1] - pred_returns[..., 0]
-        probs = torch.sigmoid(inputs.abs())
-        
-        pred_preferences = torch.argmax(pred_returns, dim=-1)
-        correct_mask = (pred_preferences == preferences)
-        incorrect_mask = ~correct_mask
-        
-        return {
-            'confidence_correct': probs[correct_mask].mean().item() if correct_mask.any() else None,
-            'confidence_incorrect': probs[incorrect_mask].mean().item() if incorrect_mask.any() else None,
-        }
-
-
     def _compute_batch_metrics_validation(self, segments: torch.Tensor, preferences: torch.Tensor):
         segments = segments.to(self.device)
         preferences = preferences.to(self.device)
-        
         ensemble_preds = self.reward_model(segments)
         
         member_metrics = []
         for member_pred in ensemble_preds:
             loss, correct = self._compute_loss(member_pred, preferences)
-            member_returns = einops.reduce(member_pred, 'batch pair segment 1 -> batch pair', 'sum')
-            calibration = self._calculate_calibration_metrics(member_returns, preferences)
-            
             member_metrics.append({
                 'loss': loss.mean().item(),
                 'accuracy': correct.mean(dtype=torch.float).item(),
-                **calibration
             })
         
         ensemble_pred = self.ensemble_agg_fn(ensemble_preds)
         loss, correct = self._compute_loss(ensemble_pred, preferences)
-        ensemble_returns = einops.reduce(ensemble_pred, 'batch pair segment 1 -> batch pair', 'sum')
-        calibration = self._calculate_calibration_metrics(ensemble_returns, preferences)
-
         return {
             'ensemble': {
                 'loss': loss.mean().item(),
-                'accuracy': correct.mean(dtype=torch.float).item(),
-                **calibration
+                'accuracy': correct.mean(dtype=torch.float).item()
             },
             'members': member_metrics
         }
