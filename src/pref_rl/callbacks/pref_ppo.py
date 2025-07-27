@@ -239,11 +239,11 @@ class PrefPPOCallback(BasePrefCallback):
         schedule_state = self._create_schedule_state()
         segments, rewards, sampler_metrics = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics, schedule_state=schedule_state)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
+
         dataset = TensorDataset(segments[keep_indices], preferences, torch.ones(len(preferences)), torch.zeros(len(preferences)))
-        return {
-            **self._validate_on_segments(dataset),
-            'sampler_metrics': sampler_metrics
-        }
+        metrics = self._average_metrics(self._validate(dataset))
+
+        return {**metrics, 'sampler_metrics': sampler_metrics}
 
 
     def _log_validation_metrics(self, metrics: dict, prefix: str = ''):
@@ -282,7 +282,7 @@ class PrefPPOCallback(BasePrefCallback):
         sampler_metrics = self.sampler.compute_logging_metrics(segments, self.reward_model, schedule_state=schedule_state)
 
         dataset = TensorDataset(segments[keep_indices], preferences, torch.ones(len(preferences)), torch.zeros(len(preferences)))
-        metrics = self._validate(dataset)
+        metrics = self._average_metrics(self._validate(dataset))
         self._log_validation_metrics({**metrics, 'sampler_metrics': sampler_metrics}, prefix='held_out/')
 
     def _predict_rewards(self):

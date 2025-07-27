@@ -142,14 +142,14 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_specific = num_samples - num_uniform
 
         schedule_state = self._create_schedule_state()
-        state_actions, rewards, _ = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model, schedule_state=schedule_state)
+        state_actions, rewards, metrics = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model, schedule_state=schedule_state)
 
         if num_uniform > 0:
             state_actions_uniform, rewards_uniform, _ = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model, schedule_state=schedule_state)
             state_actions = torch.cat([state_actions, state_actions_uniform], dim=0)
             rewards = torch.cat([rewards, rewards_uniform], dim=1)
+            metrics = sampler.compute_logging_metrics(state_actions, reward_model, schedule_state=schedule_state) if self.log_sampler_metrics else {}
 
-        metrics = sampler.compute_logging_metrics(state_actions, reward_model, schedule_state=schedule_state) if self.log_sampler_metrics else {}
         return state_actions, rewards, metrics
 
 

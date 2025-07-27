@@ -75,7 +75,7 @@ class CompositeMetric(BaseSamplerMetric):
         return self._name
 
     def _compute_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: ScheduleState):
-        return {name: metric.compute(state_action_pairs, reward_model, schedule_state) for name, metric in self.metrics}
+        return {name: metric.compute(state_action_pairs, reward_model, schedule_state) for name, metric in self.metrics.items()}
 
     def _aggregate_metrics(self, computed_metrics: dict[str, torch.Tensor], schedule_state: ScheduleState):
         weighted_values = []
