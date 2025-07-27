@@ -24,4 +24,3 @@ method:
         _target_: torch.nn.LeakyReLU
       output_fn:
         _target_: torch.nn.Tanh
-    ensemble_disjoint_data: false

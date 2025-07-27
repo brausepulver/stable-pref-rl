@@ -25,6 +25,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         log_sampler_metrics: bool = True,
         teacher: str = 'oracle',
         teacher_kwargs: dict = {},
+        feed_buffer_size: int | None = None,
         synth_ratio: Optional[float] = None,
         synth_start_step: Optional[int] = None,
         synth_stop_step: Optional[int] = None,
@@ -49,11 +50,12 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.log_sampler_metrics = log_sampler_metrics
         self.train_teacher_kind = teacher
         self.teacher_kwargs = teacher_kwargs
+        self.feed_buf_size = feed_buffer_size or self.schedule.max_feed
         self.synth_ratio = synth_ratio or 0
         self.synth_enabled = synth_ratio and synth_ratio > 0
         self.synth_start_step = synth_start_step or 0
         self.synth_stop_step = synth_stop_step or float('inf')
-        self.synth_buffer_size = synth_buffer_size
+        self.synth_buffer_size = synth_buffer_size or 0
         self.synth_teacher_kwargs = synth_teacher_kwargs or {}
         self.on_first_trained = on_first_trained
         self.on_trained = on_trained
@@ -62,7 +64,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         if self.synth_enabled and not synth_buffer_size:
             raise ValueError('synth_buffer_size must be provided if synth_ratio is set')
-        if self.ann_buffer_size_eps and self.margins_stats_window_size >= self.ann_buffer_size_eps:
+        if self.ann_buffer_size_eps and self.margins_stats_window_size > self.ann_buffer_size_eps:
             raise ValueError('margin_stats_window_size must be less than or equal to ann_buffer_size_eps')
 
         self.steps_since_train = 0

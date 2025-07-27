@@ -62,11 +62,11 @@ class BasePrefSchedule(TrainingSchedule):
         """ 
         buffer_has_done_eps = len(state.buffer.done_eps) > 0
         if self.n_steps_first_train is None and buffer_has_done_eps:
-            self.n_steps_first_train = self.num_timesteps
+            self.n_steps_first_train = state.num_timesteps
 
         feedback_left = state.feed_buffer.position < self.max_feed
         is_checkpoint = self._is_training_checkpoint(state.num_timesteps, state.has_trained, state.steps_since_train)
         should_train = is_checkpoint and (feedback_left or self.keep_training)
 
-        num_samples = int(self.feed_schedule(state.progress_remaining, state)) if feedback_left else 0
+        num_samples = int(self.batch_size_schedule(state.progress_remaining, state)) if should_train else 0
         return should_train, num_samples

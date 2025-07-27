@@ -12,9 +12,14 @@ class PrefLogger(Logger):
         super().__init__(folder, output_formats)
         self.wandb_run = wandb_run
 
-        if self.wandb_run is not None:
-            self.wandb_run.define_metric(step_metric='pref/training_progress', name='reward_model/*')
-            self.wandb_run.define_metric(step_metric='pref/num_feed', name='reward_model/*')
+        try:
+            import wandb
+            if wandb.run is not None:
+                self.run = wandb.run
+                self.run.define_metric(step_metric='pref/training_progress', name='pref/*')
+                self.run.define_metric(step_metric='pref/num_feed', name='pref/*')
+        except ImportError:
+            pass
     
     def record_with_progress(self, metrics: Dict[str, Any], num_feed: int, training_progress: float, prefix: str = ""):
         """

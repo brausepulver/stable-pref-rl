@@ -42,11 +42,11 @@ class PrefPPO(PPO):
             self.policy.init_weights(self.policy.value_net)
 
         self.pref_ppo_callback = PrefPPOCallback(
-            n_steps_first_train=self.unsuper_kwargs['n_steps_unsuper'] or None,
             on_first_trained=on_first_trained,
             save_episode_data=self.save_episode_data,
             **self.pref_kwargs
         )
+        self.pref_ppo_callback.schedule.n_steps_first_train = self.unsuper_kwargs['n_steps_unsuper'] or None
         self.unsupervised_callback = UnsupervisedCallback(**self.unsuper_kwargs) if self.unsuper_enabled else None
 
         self.callbacks = [
@@ -76,8 +76,8 @@ class PrefPPO(PPO):
         return super().train()
 
 
-    def _setup_logger(self, reset_num_timesteps: bool = True, tb_log_name: str = "run"):
-        logger = create_pref_logger(self.verbose, self.tensorboard_log, tb_log_name, reset_num_timesteps)
+    def _setup_logger(self, reset_num_timesteps: bool = True, tb_log_name: str = "run", wandb_run = None):
+        logger = create_pref_logger(self.verbose, self.tensorboard_log, tb_log_name, reset_num_timesteps, wandb_run)
         self.set_logger(logger)
 
 
