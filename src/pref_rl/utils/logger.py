@@ -30,7 +30,7 @@ class PrefLogger(Logger):
         :param training_progress: Current training progress (0.0 to 1.0)
         :param prefix: Optional prefix for wandb metric names
         """
-        prefixed_metrics = {f"{prefix}{key}": value for key, value in metrics}
+        prefixed_metrics = {f"{prefix}{key}": value for key, value in metrics.items()}
 
         # Log to standard logger
         for key, value in prefixed_metrics.items():
