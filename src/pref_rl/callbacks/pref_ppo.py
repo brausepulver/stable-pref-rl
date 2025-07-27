@@ -30,7 +30,6 @@ class PrefPPOCallback(BasePrefCallback):
         validate_on_held_out: bool = True,
         held_out_data_path: str | None = None,
         log_sampler_metrics: bool = True,
-        ensemble_disjoint_data: bool = False,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
         num_samples_ep_age: Optional[int] = None,
@@ -49,7 +48,6 @@ class PrefPPOCallback(BasePrefCallback):
         self.validate_on_current = validate_on_current
         self.validate_on_held_out = validate_on_held_out
         self.log_sampler_metrics = log_sampler_metrics
-        self.ensemble_disjoint_data = ensemble_disjoint_data
         self.ensemble_agg_fn = ensemble_agg_fn
         self.num_samples_ep_age = num_samples_ep_age
 
@@ -200,19 +198,9 @@ class PrefPPOCallback(BasePrefCallback):
             return metrics
 
         metrics = []
-
         for index, member in enumerate(self.reward_model.members):
-            if self.ensemble_disjoint_data:
-                ensemble_size = len(self.reward_model.members)
-                dataset_member = self._get_subset_for_member(dataset, index, len(dataset), ensemble_size)
-                if ep_ages_dataset is not None:
-                    ep_ages_dataset_member = self._get_subset_for_member(ep_ages_dataset, index, len(ep_ages_dataset), ensemble_size)
-                member_metrics = self._train_module_epoch(member, dataset_member, ep_ages_dataset_member)
-            else:
-                member_metrics = self._train_module_epoch(member, dataset, ep_ages_dataset)
-
+            member_metrics = self._train_module_epoch(member, dataset, ep_ages_dataset)
             metrics.append(member_metrics)
-
         return metrics
 
 
