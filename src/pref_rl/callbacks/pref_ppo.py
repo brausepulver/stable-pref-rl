@@ -1,3 +1,4 @@
+from collections import defaultdict
 import einops
 from hydra.utils import to_absolute_path
 import numpy as np
@@ -61,10 +62,6 @@ class PrefPPOCallback(BasePrefCallback):
             Path(to_absolute_path(held_out_data_path))
             if held_out_data_path else None
         )
-
-        if self.run is not None:
-            self.run.define_metric(step_metric='pref/training_progress', name='reward_model/*')
-            self.run.define_metric(step_metric='pref/num_feed', name='reward_model/*')
 
 
     def _create_schedule_state(self):
@@ -231,7 +228,7 @@ class PrefPPOCallback(BasePrefCallback):
             if epoch_accuracy > self.train_acc_threshold_reward:
                 break
 
-        grouped_metrics = {}
+        grouped_metrics = defaultdict(list)
         for batch_metrics in [batch for epoch in metrics for member in epoch for batch in member]:
             for name, value in batch_metrics.items():
                 grouped_metrics[name].append(value)
@@ -241,15 +238,7 @@ class PrefPPOCallback(BasePrefCallback):
             'epochs': epoch + 1,
         }
         log_metrics = {f"reward_model/train/{name}": value for name, value in all_metrics.items()}
-
-        for key, value in log_metrics.items():
-            self.logger.record(key, value)
-        if self.run:
-            self.run.log({
-                **log_metrics,
-                'pref/num_feed': self.num_feed,
-                'pref/training_progress': self.training_progress,
-            })
+        self.logger.record_with_progress(log_metrics, self.num_feed, self.training_progress)
 
         with torch.no_grad():
             if self.validate_on_train:
@@ -272,7 +261,7 @@ class PrefPPOCallback(BasePrefCallback):
         }
 
 
-    def _compute_batch_metrics(self, segments: torch.Tensor, preferences: torch.Tensor):
+    def _compute_batch_metrics_validation(self, segments: torch.Tensor, preferences: torch.Tensor):
         segments = segments.to(self.device)
         preferences = preferences.to(self.device)
         
@@ -280,25 +269,25 @@ class PrefPPOCallback(BasePrefCallback):
         
         member_metrics = []
         for member_pred in ensemble_preds:
-            loss, accuracy = self._compute_loss(member_pred, preferences)
+            loss, correct = self._compute_loss(member_pred, preferences)
             member_returns = einops.reduce(member_pred, 'batch pair segment 1 -> batch pair', 'sum')
             calibration = self._calculate_calibration_metrics(member_returns, preferences)
             
             member_metrics.append({
-                'loss': loss.item(),
-                'accuracy': accuracy,
+                'loss': loss.mean().item(),
+                'accuracy': correct.mean(dtype=torch.float).item(),
                 **calibration
             })
         
         ensemble_pred = self.ensemble_agg_fn(ensemble_preds)
-        loss, accuracy = self._compute_loss(ensemble_pred, preferences)
+        loss, correct = self._compute_loss(ensemble_pred, preferences)
         ensemble_returns = einops.reduce(ensemble_pred, 'batch pair segment 1 -> batch pair', 'sum')
         calibration = self._calculate_calibration_metrics(ensemble_returns, preferences)
 
         return {
             'ensemble': {
-                'loss': loss.item(),
-                'accuracy': accuracy,
+                'loss': loss.mean().item(),
+                'accuracy': correct.mean(dtype=torch.float).item(),
                 **calibration
             },
             'members': member_metrics
@@ -359,7 +348,7 @@ class PrefPPOCallback(BasePrefCallback):
         
         batch_metrics_list = []
         for batch_segments, batch_preferences in dataloader:
-            batch_metrics = self._compute_batch_metrics(batch_segments, batch_preferences)
+            batch_metrics = self._compute_batch_metrics_validation(batch_segments, batch_preferences)
             batch_metrics_list.append(batch_metrics)
         
         results = self._aggregate_metrics(batch_metrics_list)
@@ -383,20 +372,12 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _log_validation_metrics(self, metrics: dict, prefix: str = ''):
-        scoped_metrics = {f'reward_model/eval/{prefix}{key}': value for key, value in metrics.items() if value is not None}
+        scoped_metrics = {f'reward_model/eval/{prefix}{key}': value for key, value in metrics.items() if value is not None and key != 'sampler_metrics'}
 
         if self.log_sampler_metrics and metrics.get('sampler_metrics') is not None:
-            self._log_metrics(metrics.pop('sampler_metrics'), prefix=prefix)
+            self._log_metrics_stats(metrics.pop('sampler_metrics'), prefix=prefix)
 
-        for key, value in metrics.items():
-            self.logger.record(f"reward_model/eval/{prefix}{key}", value)
-
-        if self.run:
-            self.run.log({
-                **scoped_metrics,
-                'pref/num_feed': self.num_feed,
-                'pref/training_progress': self.training_progress,
-            })
+        self.logger.record_with_progress(scoped_metrics, self.num_feed, self.training_progress)
 
 
     def _validate_train(self):
@@ -467,16 +448,14 @@ class PrefPPOCallback(BasePrefCallback):
                 
                 self.ensemble_reward_buffer[env_idx] = []
 
-                if self.run:
-                    self.run.log({
-                        'pref/ep_rew_mean': ep_info['pred_r_mean'],
-                        'pref/step_rew_mean': ep_info['pred_r_step'],
-                        'pref/ep_rew_std': ep_info['pred_r_std'],
-                        'reward_model/avg_member_std_ep': ep_info['pred_r_std_member'],
-                        'reward_model/avg_ensemble_std_rew': ep_info['pred_r_uncertainty'],
-                        'pref/num_feed': self.num_feed,
-                        'pref/training_progress': self.training_progress,
-                    })
+                ensemble_metrics = {
+                    'pref/ep_rew_mean': ep_info['pred_r_mean'],
+                    'pref/step_rew_mean': ep_info['pred_r_step'],
+                    'pref/ep_rew_std': ep_info['pred_r_std'],
+                    'reward_model/avg_member_std_ep': ep_info['pred_r_std_member'],
+                    'reward_model/avg_ensemble_std_rew': ep_info['pred_r_uncertainty'],
+                }
+                self.logger.record_with_progress(ensemble_metrics, self.num_feed, self.training_progress)
 
 
     def _on_training_start(self) -> None:

@@ -95,16 +95,6 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             'cpu'
         )
 
-        self.run = None
-        try:
-            import wandb
-            if wandb.run is not None:
-                self.run = wandb.run
-                self.run.define_metric(step_metric='pref/training_progress', name='pref/*')
-                self.run.define_metric(step_metric='pref/num_feed', name='pref/*')
-        except ImportError:
-            pass
-
 
     @abstractmethod
     def _get_predictor(self):
@@ -145,21 +135,14 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         )
 
 
-    def _log_metrics(self, sampler_metrics: dict, prefix: str = ''):
-        for metric_name, metric_values in sampler_metrics.items():
-            metric_mean = metric_values.mean().cpu().item()
-            metric_std = metric_values.std().cpu().item()
+    def _log_metrics_stats(self, metrics: dict, prefix: str = ''):
+        metrics_stats = {}
 
-            self.logger.record(f'reward_model/{prefix}{metric_name}_mean', metric_mean)
-            self.logger.record(f'reward_model/{prefix}{metric_name}_std', metric_std)
+        for metric_name, metric_values in metrics.items():
+            metrics_stats[f'{metric_name}_mean'] = metric_values.mean().cpu().item()
+            metrics_stats[f'{metric_name}_std'] = metric_values.std().cpu().item()
 
-            if self.run:
-                self.run.log({
-                    f'reward_model/{prefix}{metric_name}_mean': metric_mean,
-                    f'reward_model/{prefix}{metric_name}_std': metric_std,
-                    'pref/num_feed': self.num_feed,
-                    'pref/training_progress': self.training_progress,
-                })
+        self.logger.record_with_progress(metrics_stats, self.num_feed, self.training_progress, prefix=f'reward_model/{prefix}')
 
 
     def _sample_segments(self, sampler: Sampler, episodes, episode_ages, num_samples, reward_model):
@@ -187,7 +170,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         state_actions, rewards, sampler_metrics = self._sample_segments(sampler, episodes, episode_ages,num_samples, reward_model)
 
         if self.log_sampler_metrics and sampler_metrics:
-            self._log_metrics(sampler_metrics, prefix='sampler/')
+            self._log_metrics_stats(sampler_metrics, prefix='sampler/')
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
         weights = torch.ones_like(preferences[keep_indices])
@@ -201,7 +184,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_samples = int(feed_batch_size * self.synth_ratio)
 
         segments, preferences, metrics, weights = self.synthesizer.generate_pairs(episodes, episode_ages, num_samples, self.num_timesteps)
-        self._log_metrics(metrics, prefix='synth/')
+        self._log_metrics_stats(metrics, prefix='synth/')
         
         num_added = self.synth_buffer.add(segments, preferences, weights)
         return num_added
@@ -214,18 +197,24 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_added = self._expand_real_data(sampler, feed_batch_size)
         self.num_feed += num_added
         self.training_progress = self.num_feed / self.max_feed
-        self.logger.record('pref/num_feed', self.num_feed)
-        self.logger.record('pref/training_progress', self.training_progress)
-
-        self.logger.record('pref/feed_buffer_pos', self.feed_buffer.position)
-        self.logger.record('pref/feed_buffer_size', self.feed_buffer.size)
+        
+        metrics_to_log = {
+            'pref/num_feed': self.num_feed,
+            'pref/training_progress': self.training_progress,
+            'pref/feed_buffer_pos': self.feed_buffer.position,
+            'pref/feed_buffer_size': self.feed_buffer.size,
+        }
+        self.logger.record_with_progress(metrics_to_log, self.num_feed, self.training_progress)
 
         should_collect_synth = self.synth_start_step <= self.num_timesteps <= self.synth_stop_step
         if self.synth_enabled and should_collect_synth:
             self.num_synth += self._expand_synth_data(feed_batch_size)
-            self.logger.record('pref/num_synth', self.num_synth)
-            self.logger.record('pref/synth_buffer_pos', self.synth_buffer.position)
-            self.logger.record('pref/synth_buffer_size', self.synth_buffer.size)
+            synth_metrics = {
+                'pref/num_synth': self.num_synth,
+                'pref/synth_buffer_pos': self.synth_buffer.position,
+                'pref/synth_buffer_size': self.synth_buffer.size,
+            }
+            self.logger.record_with_progress(synth_metrics, self.num_feed, self.training_progress)
 
 
     @abstractmethod
@@ -251,7 +240,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             recent_eps = list(itertools.islice(reversed(self.buffer.get_episodes()), self.margins_stats_window_size))
             self.train_teacher.update_thresholds(recent_eps)
 
-            self.logger.record('pref/num_episodes', len(self.buffer.done_eps))
+            episode_metrics = {'pref/num_episodes': len(self.buffer.done_eps)}
+            self.logger.record_with_progress(episode_metrics, self.num_feed, self.training_progress)
 
         buffer_has_done = len(self.buffer.done_eps) > 0
         feedback_left = self.num_feed < self.max_feed
