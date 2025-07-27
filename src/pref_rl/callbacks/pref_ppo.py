@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset, Dataset, Subset, ConcatDataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset, ConcatDataset
 from typing import Callable, Optional
 
 from .pref import BasePrefCallback

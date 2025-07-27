@@ -100,8 +100,8 @@ class PrefPPO(PPO):
 
     def _get_torch_save_params(self):
         ppo_state_dicts, ppo_vars = super()._get_torch_save_params()
-        state_dicts = ['pref_ppo_callback.reward_model', 'pref_ppo_callback.rew_optimizer'] if self.save_callback_data else []
-        vars = ['pref_ppo_callback.segment_buffer', 'pref_ppo_callback.preference_buffer'] if self.save_callback_data else []
+        state_dicts = ['pref_ppo_callback.reward_model', 'pref_ppo_callback.rew_optimizers'] if self.save_callback_data else []
+        vars = ['pref_ppo_callback.feed_buffer', 'pref_ppo_callback.synth_buffer'] if self.save_callback_data else []
         return ppo_state_dicts + state_dicts, ppo_vars + vars
 
 
@@ -116,10 +116,8 @@ class PrefPPO(PPO):
                 'ensemble_reward_buffer': self.pref_ppo_callback.ensemble_reward_buffer,
                 'steps_since_train': self.pref_ppo_callback.steps_since_train,
                 'has_trained': self.pref_ppo_callback.has_trained,
-                'num_feed': self.pref_ppo_callback.num_feed,
                 'training_progress': self.pref_ppo_callback.training_progress,
-                'keep_training': self.pref_ppo_callback.keep_training,
-                'n_steps_train_total': self.pref_ppo_callback.n_steps_train_total,
+                'n_steps_train_total': self.pref_ppo_callback.n_steps_train_end,
                 'buffer': self.pref_ppo_callback.buffer,
                 'train_teacher': self.pref_ppo_callback.train_teacher,
             }
@@ -139,10 +137,8 @@ class PrefPPO(PPO):
             cb.ensemble_reward_buffer = d["ensemble_reward_buffer"]
             cb.steps_since_train      = d["steps_since_train"]
             cb.has_trained            = d["has_trained"]
-            cb.num_feed               = d["num_feed"]
             cb.training_progress      = d["training_progress"]
-            cb.keep_training          = d["keep_training"]
-            cb.n_steps_train_total    = d["n_steps_train_total"]
+            cb.n_steps_train_total    = d["n_steps_train_end"]
             cb.buffer                 = d["buffer"]
             cb.train_teacher          = d["train_teacher"]
 
