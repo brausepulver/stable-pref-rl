@@ -1,5 +1,4 @@
 from collections import defaultdict
-from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -8,10 +7,9 @@ from hydra.utils import to_absolute_path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset, Dataset, ConcatDataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 
 from .pref import BasePrefCallback
-from ..utils.data import MaskedDataset
 from ..utils.reward_models import RewardModel
 from ..utils.sampler import NoValidEpisodesError
 from ..utils.schedules import PrefPPOScheduleState
@@ -155,14 +153,7 @@ class PrefPPOCallback(BasePrefCallback):
         return metrics
 
 
-    def _get_dataset(self):
-        real_dataset = MaskedDataset(self.feed_buffer.get_dataset(), 0)
-        synth_dataset = MaskedDataset(self.synth_buffer.get_dataset(), 1)
-        return ConcatDataset([real_dataset, synth_dataset])
-
-
-    def _train_reward_model_epoch(self):
-        dataset = self._get_dataset()
+    def _train_reward_model_epoch(self, dataset):
         metrics = []
 
         for index, member in enumerate(self.reward_model.members):
@@ -183,12 +174,12 @@ class PrefPPOCallback(BasePrefCallback):
         return avg_metrics
 
 
-    def _train_predictor(self):
+    def _train_predictor(self, dataset):
         self.reward_model.train()
 
         metrics = []
         for epoch in range(self.n_epochs_reward):
-            epoch_metrics = self._train_reward_model_epoch()
+            epoch_metrics = self._train_reward_model_epoch(dataset)
             metrics.append(epoch_metrics)
 
             epoch_accuracy = np.mean([batch['accuracy'] for member in epoch_metrics for batch in member if 'accuracy' in batch])

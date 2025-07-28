@@ -19,7 +19,7 @@ class BasePrefSchedule(TrainingSchedule):
 
     def __init__(self,
                  n_steps_reward: int = 32_000,
-                 max_feed: int = 2_000,
+                 max_feed: Optional[int] = 2_000,
                  feed_batch_size: Optional[int] = None,
                  batch_size_schedule: Optional[Callable] = None,
                  n_steps_first_train: Optional[int] = None,
@@ -64,7 +64,7 @@ class BasePrefSchedule(TrainingSchedule):
         if self.n_steps_first_train is None and buffer_has_done_eps:
             self.n_steps_first_train = state.num_timesteps
 
-        feedback_left = state.feed_buffer.position < self.max_feed
+        feedback_left = self.max_feed is None or state.feed_buffer.position < self.max_feed
         is_checkpoint = self._is_training_checkpoint(state.num_timesteps, state.has_trained, state.steps_since_train)
         should_train = is_checkpoint and (feedback_left or self.keep_training)
 
