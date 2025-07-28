@@ -269,7 +269,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         should_train_synth, num_samples_synth = self.synth_schedule(schedule_state.progress_remaining, schedule_state) if self.synth_schedule else (False, 0)
         if num_samples_synth > 0:
-            self._expand_synth_data(self._get_sampler(), num_samples_synth)
+            self._expand_synth_data(num_samples_synth)
 
         if should_train_real or should_train_synth:
             dataset = self._get_dataset(should_train_real, should_train_synth)
