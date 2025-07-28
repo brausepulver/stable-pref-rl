@@ -16,11 +16,15 @@ for i in $(seq 1 $N_RUNS); do
         ${BASE_PARAMS[@]} \
         training.seed=$seed \
         preset.method.pref.sampler=disagreement \
-        "preset.method.pref.synth_ratio=1" \
         "preset.method.pref.synth_buffer_size=200" \
-        "preset.method.pref.synth_start_step=64000" \
-        "preset.method.pref.synth_teacher_kwargs.neg_eps_until_steps=48000" \
-        "preset.method.pref.synth_teacher_kwargs.pos_eps_after_eq_steps=16000" \
+        "+preset.method.pref.synth_schedule._target_=pref_rl.utils.train_schedules.BasePrefSchedule" \
+        "+preset.method.pref.synth_schedule.n_steps_reward=32000" \
+        "+preset.method.pref.synth_schedule.max_feed=null" \
+        "+preset.method.pref.synth_schedule.feed_batch_size=200" \
+        "+preset.method.pref.synth_schedule.n_steps_first_train=64000" \
+        "+preset.method.pref.synth_schedule.n_steps_last_train=320000" \
+        "preset.method.pref.synth_kwargs.neg_eps_until_steps=48000" \
+        "preset.method.pref.synth_kwargs.pos_eps_after_eq_steps=16000" \
         'logging.tags=[pref_ppo,experiment,synthetic,disagreement]' \
         "logging.group=pref_ppo/experiment/synth/eph_1"
 done
