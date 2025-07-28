@@ -1,6 +1,5 @@
-import numpy as np
 import torch
-from typing import Optional, Literal
+from typing import Optional
 
 from .sampler import Sampler
 

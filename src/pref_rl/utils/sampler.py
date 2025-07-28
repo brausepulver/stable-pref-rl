@@ -117,15 +117,13 @@ class Sampler:
     def _get_episode_indices(self, valid_episodes: list, num_samples: int, stratified: bool = False):
         if stratified:
             episodes_count = len(valid_episodes)
-            total_samples = 2 * num_samples
-
-            repeats = torch.ones(episodes_count) * (total_samples // episodes_count)
-            repeats[:total_samples % episodes_count] += 1
+            repeats = torch.ones(episodes_count) * (num_samples // episodes_count)
+            repeats[:num_samples % episodes_count] += 1
 
             ep_indices = torch.repeat_interleave(torch.arange(episodes_count), repeats.long())
             ep_indices = ep_indices[torch.randperm(len(ep_indices))]
         else:
-            ep_indices = torch.randint(0, len(valid_episodes), (2 * num_samples,))
+            ep_indices = torch.randint(0, len(valid_episodes), (num_samples,))
         
         return ep_indices
 
@@ -176,7 +174,8 @@ class Sampler:
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
-        ep_indices, state_actions, gt_rewards = self.sample_segments(episodes, num_samples_expanded, stratified)
+        num_segments = 2 * num_samples_expanded
+        ep_indices, state_actions, gt_rewards = self.sample_segments(episodes, num_segments, stratified)
 
         state_action_pairs = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
         reward_pairs = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
