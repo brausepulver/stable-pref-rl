@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-N_RUNS=56
+N_RUNS=${1:-56}
 
 BASE_PARAMS=(
     'hydra.run.dir=outputs/${oc.env:JOB_ID}'
@@ -10,7 +10,7 @@ BASE_PARAMS=(
 )
 
 # Disagreement sampling
-for train_acc_threshold_reward in 0.97 0.90 0.75 0.50; do
+for train_acc_threshold_reward in 0.99 0.95 0.90 0.75 0.50 0.25; do
     for i in $(seq 1 $N_RUNS); do
         seed=$((1000 * i))
 

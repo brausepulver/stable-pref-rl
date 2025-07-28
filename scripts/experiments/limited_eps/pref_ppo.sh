@@ -11,7 +11,7 @@ BASE_PARAMS=(
 )
 
 # Disagreement sampling
-for ann_buffer_size_eps in 128 96 64 32 16; do
+for ann_buffer_size_eps in null 128 80 64 48 32 16; do
     for i in $(seq 1 $N_RUNS); do
         seed=$((1000 * i))
 
