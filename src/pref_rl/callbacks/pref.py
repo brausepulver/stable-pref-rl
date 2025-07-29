@@ -33,6 +33,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         synth_schedule: Optional[TrainingSchedule] = None,
         on_first_trained: Callable | None = None,
         on_trained: Callable | None = None,
+        keep_all_eps: bool = False,
         save_episode_data: bool = False,
         log_prefix='pref/',
         device: str = 'cpu',
@@ -56,7 +57,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.synth_kwargs = synth_kwargs or {}
         self.on_first_trained = on_first_trained
         self.on_trained = on_trained
-        self.save_episode_data = save_episode_data
+        self.keep_all_eps = keep_all_eps or save_episode_data
         self.uniform_frac = self.sampler_kwargs.get('uniform_fraction', 0.0) if self.sampler_metric != 'uniform' else 0.0
 
         if self.synth_schedule and not synth_buffer_size:
@@ -96,7 +97,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             self.sampler_metric = metric_class() if metric_class else None
 
         obs_size, act_size = self._get_input_sizes()
-        self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps, keep_all_eps=self.save_episode_data)
+        self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps, keep_all_eps=self.keep_all_eps)
         self.sampler = Sampler(self.segment_size, obs_size, act_size, self.sampler_metric)
         self.uniform_sampler = Sampler(self.segment_size, obs_size, act_size)
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher_kind, teacher_kwargs=self.teacher_kwargs)

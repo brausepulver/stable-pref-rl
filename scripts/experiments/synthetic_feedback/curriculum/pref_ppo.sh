@@ -7,6 +7,7 @@ BASE_PARAMS=(
     "preset=pref_ppo/quadruped_walk"
     "training.total_timesteps=2000000"
     "preset.method.clip_range.end=0.2"
+    "+preset.method.pref.keep_all_eps=true"
 )
 
 # Disagreement sampling
