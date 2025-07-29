@@ -64,11 +64,10 @@ class PrefPPOCallback(BasePrefCallback):
             total_timesteps=base_state.total_timesteps,
             training_progress=base_state.training_progress,
             progress_remaining=base_state.progress_remaining,
-            has_trained=base_state.has_trained,
-            steps_since_train=base_state.steps_since_train,
             buffer=base_state.buffer,
             feed_buffer=base_state.feed_buffer,
             synth_buffer=base_state.synth_buffer,
+            num_envs=base_state.num_envs,
             reward_model=self.reward_model
         )
 

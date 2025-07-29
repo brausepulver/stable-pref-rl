@@ -64,7 +64,6 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         if self.ann_buffer_size_eps and self.margins_stats_window_size > self.ann_buffer_size_eps:
             raise ValueError('margin_stats_window_size must be less than or equal to ann_buffer_size_eps')
 
-        self.steps_since_train = 0
         self.has_trained = False
         self.training_progress = 0.0
         self.n_steps_train_end = None
@@ -118,11 +117,10 @@ class BasePrefCallback(RewardModifierCallback, ABC):
             total_timesteps=self.total_timesteps,
             training_progress=self.training_progress,
             progress_remaining=progress_remaining,
-            has_trained=self.has_trained,
-            steps_since_train=self.steps_since_train,
             buffer=self.buffer,
             feed_buffer=self.feed_buffer,
             synth_buffer=self.synth_buffer,
+            num_envs=self.training_env.num_envs,
         )
 
 
@@ -226,7 +224,6 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
     def _handle_train(self, dataset: Dataset):
         self._train_predictor(dataset)
-        self.steps_since_train = 0
 
         if self.on_trained:
             self.on_trained()
@@ -255,8 +252,6 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _on_step(self):
-        self.steps_since_train += self.training_env.num_envs
-
         self._add_steps_to_buffer()
 
         if self.locals['dones'].any():

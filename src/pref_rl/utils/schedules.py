@@ -17,8 +17,7 @@ class ScheduleState(ABC):
 
 @dataclass
 class PrefScheduleState(ScheduleState):
-    has_trained: bool
-    steps_since_train: int
+    num_envs: int
     buffer: EpisodeBuffer
     feed_buffer: FeedbackBuffer
     synth_buffer: FeedbackBuffer

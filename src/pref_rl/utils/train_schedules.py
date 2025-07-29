@@ -44,12 +44,14 @@ class BasePrefSchedule(TrainingSchedule):
         self.keep_training = keep_training
 
 
-    def _is_training_checkpoint(self, num_timesteps: int, has_trained: bool, steps_since_train: int) -> bool:
+    def _is_training_checkpoint(self, num_timesteps: int, num_envs: int) -> bool:
         """Determine if training should occur at this timestep."""
-        should_start_training = not has_trained and self.n_steps_first_train is not None and steps_since_train >= self.n_steps_first_train
-        should_train = has_trained and steps_since_train >= self.n_steps_reward
+        step_remainder = (num_timesteps - self.n_steps_first_train) % self.n_steps_reward
+        should_train = num_timesteps >= self.n_steps_first_train and step_remainder < num_envs
+
         should_stop_training = self.n_steps_last_train is not None and num_timesteps >= self.n_steps_last_train
-        return (should_start_training or should_train) and not should_stop_training
+
+        return should_train and not should_stop_training
 
 
     def __call__(self, progress_remaining: float, state: Optional[PrefScheduleState] = None) -> int:
@@ -65,7 +67,7 @@ class BasePrefSchedule(TrainingSchedule):
             self.n_steps_first_train = state.num_timesteps
 
         feedback_left = self.max_feed is None or state.feed_buffer.position < self.max_feed
-        is_checkpoint = self._is_training_checkpoint(state.num_timesteps, state.has_trained, state.steps_since_train)
+        is_checkpoint = self._is_training_checkpoint(state.num_timesteps, state.num_envs)
         should_train = is_checkpoint and (feedback_left or self.keep_training)
 
         num_samples = int(self.batch_size_schedule(state.progress_remaining, state)) if should_train else 0
