@@ -269,6 +269,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         if should_train_real or should_train_synth:
             dataset = self._get_dataset(should_train_real, should_train_synth)
+            if not should_train_real:
+                train_acc_threshold_reward = self.train_acc_threshold_reward
+                self.train_acc_threshold_reward = 0
             self._handle_train(dataset)
+            if not should_train_real:
+                self.train_acc_threshold_reward = train_acc_threshold_reward
 
         return super()._on_step()
