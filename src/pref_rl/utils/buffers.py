@@ -29,18 +29,18 @@ class EpisodeBuffer:
             self.running_eps[env_idx] = None
 
 
-    def get_episodes(self):
+    def get_episodes(self, full=False):
         running = [torch.stack(ep[1]) for ep in self.running_eps if ep is not None]
         done = [ep[1] for ep in self.done_eps]
-        if self.keep_all_eps:
+        if self.keep_all_eps and not full:
             done = done[-self.n_episodes:]
         return done + running
 
 
-    def get_episode_ages(self):
+    def get_episode_ages(self, full=False):
         running_ages = [ep[0] for ep in self.running_eps if ep is not None]
         done_ages = [ep[0] for ep in self.done_eps]
-        if self.keep_all_eps:
+        if self.keep_all_eps and not full:
             done_ages = done_ages[-self.n_episodes:]
         return torch.tensor(done_ages + running_ages)
 

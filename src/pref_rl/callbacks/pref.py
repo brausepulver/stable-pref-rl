@@ -177,8 +177,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _expand_synth_data(self, num_samples: int):
-        episodes = self.buffer.get_episodes()
-        episode_ages = self.buffer.get_episode_ages()
+        episodes = self.buffer.get_episodes(full=True)
+        episode_ages = self.buffer.get_episode_ages(full=True)
         schedule_state = self._create_schedule_state()
         segments, preferences, metrics, weights = self.synthesizer.generate_pairs(episodes, episode_ages, num_samples, schedule_state)
         self._log_metrics_stats(metrics, prefix='synth/')
