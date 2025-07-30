@@ -26,7 +26,8 @@ class LogRolloutStatsCallback(BaseCallback):
         ep_infos = list(itertools.islice(reversed(self.model.ep_info_buffer), self.window_size))
         for ep_info_key, log_key in self.ep_info_log_keys.items():
             values = [ep_info[ep_info_key] for ep_info in ep_infos if ep_info_key in ep_info]
-            self.logger.record(log_key, safe_mean(values))
+            if len(values) > 0:
+                self.logger.record(log_key, safe_mean(values))
 
     def _on_step(self):
         self.rollout_done_eps_count += self.locals['dones'].sum().item()
