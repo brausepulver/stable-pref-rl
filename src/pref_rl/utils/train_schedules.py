@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
 from typing import Callable, Optional, Tuple
 
-from .schedules import BaseSchedule, ConstantSchedule, PrefScheduleState, ScheduleState
+from .schedules import BaseSchedule, ConstantSchedule, PrefScheduleState, BaseScheduleState
 
 
 class TrainingSchedule(BaseSchedule, ABC):
     @abstractmethod
-    def __call__(self, progress_remaining: float, state: Optional[ScheduleState] = None) -> Tuple[bool, int]:
+    def __call__(self, progress_remaining: float, state: Optional[BaseScheduleState] = None) -> Tuple[bool, int]:
         pass
 
 

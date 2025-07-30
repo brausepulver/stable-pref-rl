@@ -8,7 +8,8 @@ from .buffers import EpisodeBuffer, FeedbackBuffer
 
 
 @dataclass
-class ScheduleState(ABC):
+class BaseScheduleState(ABC):
+    num_envs: int
     num_timesteps: int
     total_timesteps: int
     training_progress: float
@@ -16,8 +17,7 @@ class ScheduleState(ABC):
 
 
 @dataclass
-class PrefScheduleState(ScheduleState):
-    num_envs: int
+class PrefScheduleState(BaseScheduleState):
     buffer: EpisodeBuffer
     feed_buffer: FeedbackBuffer
     synth_buffer: FeedbackBuffer
@@ -30,7 +30,7 @@ class PrefPPOScheduleState(PrefScheduleState):
 
 class BaseSchedule(ABC):
     @abstractmethod
-    def __call__(self, progress_remaining: float, state: Optional[ScheduleState] = None) -> Any:
+    def __call__(self, progress_remaining: float, state: Optional[BaseScheduleState] = None) -> Any:
         pass
 
 

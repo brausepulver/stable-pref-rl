@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .schedules import ConstantSchedule, ScheduleState
+from .schedules import ConstantSchedule, BaseScheduleState
 
 
 class NoValidEpisodesError(ValueError):
@@ -16,7 +16,7 @@ class NoValidEpisodesError(ValueError):
 
 class BaseSamplerMetric(ABC):
     @abstractmethod
-    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[ScheduleState]) -> torch.Tensor:
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState]) -> torch.Tensor:
         pass
 
     @property
@@ -24,7 +24,7 @@ class BaseSamplerMetric(ABC):
     def name(self) -> str:
         pass
 
-    def get_logging_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[ScheduleState]) -> dict[str, torch.Tensor]:
+    def get_logging_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState]) -> dict[str, torch.Tensor]:
         """Return all metrics this sampler wants to log."""
         return {self.name: self.compute(state_action_pairs, reward_model, schedule_state)}
 
@@ -74,10 +74,10 @@ class CompositeMetric(BaseSamplerMetric):
     def name(self) -> str:
         return self._name
 
-    def _compute_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: ScheduleState):
+    def _compute_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState):
         return {name: metric.compute(state_action_pairs, reward_model, schedule_state) for name, metric in self.metrics.items()}
 
-    def _aggregate_metrics(self, computed_metrics: dict[str, torch.Tensor], schedule_state: ScheduleState):
+    def _aggregate_metrics(self, computed_metrics: dict[str, torch.Tensor], schedule_state: BaseScheduleState):
         weighted_values = []
         for name, value in computed_metrics.items():
             weight = self.weights[name](schedule_state.progress_remaining, schedule_state)
@@ -157,7 +157,7 @@ class Sampler:
         return ep_indices, state_actions, gt_rewards
 
 
-    def compute_logging_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[ScheduleState] = None):
+    def compute_logging_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState] = None):
         metrics = {}
         
         if self.sampling_metric:
@@ -170,7 +170,7 @@ class Sampler:
         return metrics
 
 
-    def sample_pairs(self, episodes: list, episode_ages: list, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, compute_uniform_metrics: bool = True, schedule_state: Optional[ScheduleState] = None):
+    def sample_pairs(self, episodes: list, episode_ages: list, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, compute_uniform_metrics: bool = True, schedule_state: Optional[BaseScheduleState] = None):
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples

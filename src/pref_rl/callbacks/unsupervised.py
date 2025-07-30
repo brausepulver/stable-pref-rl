@@ -13,6 +13,7 @@ class UnsupervisedCallback(RewardModifierCallback):
         self.n_neighbors = n_neighbors
 
         self._buffer = []
+        self._dists_buffer = []
 
 
     def _estimate_state_entropy(self, obs: torch.Tensor):
@@ -22,8 +23,11 @@ class UnsupervisedCallback(RewardModifierCallback):
         distances = torch.norm(differences, dim=-1)
         neighbor_dist = torch.kthvalue(distances, self.n_neighbors + 1, dim=-1).values
 
-        std = np.std(self._buffer)
-        normalized_dist = neighbor_dist / (std + 1e-8)
+        dists_std = torch.cat(self._dists_buffer).std() if len(self._dists_buffer) >= 2 else 1
+        normalized_dist = neighbor_dist / dists_std
+
+        self._dists_buffer.append(neighbor_dist)
+
         return normalized_dist
 
 

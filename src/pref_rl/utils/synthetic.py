@@ -2,7 +2,7 @@ import torch
 from typing import Optional, Union, Callable
 
 from .sampler import Sampler
-from .schedules import ConstantSchedule, ScheduleState
+from .schedules import ConstantSchedule, BaseScheduleState
 
 
 class TemporalSynthesizer:
@@ -27,7 +27,7 @@ class TemporalSynthesizer:
         self.sampler = Sampler(segment_size, observation_size, action_size)
 
 
-    def _calculate_loss_weights(self, num_samples: int, state: ScheduleState) -> torch.Tensor:
+    def _calculate_loss_weights(self, num_samples: int, state: BaseScheduleState) -> torch.Tensor:
         return torch.full((num_samples,), self.loss_weight(state.progress_remaining, state))
 
 
@@ -38,7 +38,7 @@ class TemporalSynthesizer:
         }
 
 
-    def generate_pairs(self, episodes: list, episode_ages: torch.Tensor, num_samples: int, state: ScheduleState):
+    def generate_pairs(self, episodes: list, episode_ages: torch.Tensor, num_samples: int, state: BaseScheduleState):
         if not episodes:
             raise ValueError("Episodes must not be empty to generate synthetic pairs")
 
