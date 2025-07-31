@@ -28,12 +28,12 @@ class PrefPPOCallback(BasePrefCallback):
         validate_on_current: bool = True,
         validate_on_held_out: bool = True,
         held_out_data_path: str | None = None,
-        log_sampler_metrics: bool = True,
+        log_validation_sampler_metrics: bool = True,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
         **kwargs
     ):
-        super().__init__(log_sampler_metrics=log_sampler_metrics, **kwargs)
+        super().__init__(**kwargs)
 
         self.n_epochs_reward = n_epochs_reward
         self.train_acc_threshold_reward = train_acc_threshold_reward
@@ -44,7 +44,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.validate_on_train = validate_on_train
         self.validate_on_current = validate_on_current
         self.validate_on_held_out = validate_on_held_out
-        self.log_sampler_metrics = log_sampler_metrics
+        self.log_validation_sampler_metrics = log_validation_sampler_metrics
         self.ensemble_agg_fn = ensemble_agg_fn
 
         self.reward_model_cls = {
@@ -209,9 +209,9 @@ class PrefPPOCallback(BasePrefCallback):
         return metrics
 
 
-    def _validate_on_episodes(self, episodes, episode_ages, size: int, compute_sampler_metrics: bool = True):
+    def _validate_on_episodes(self, episodes, episode_ages, size: int):
         schedule_state = self._create_schedule_state()
-        segments, rewards, sampler_metrics = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, compute_uniform_metrics=compute_sampler_metrics, schedule_state=schedule_state)
+        segments, rewards, sampler_metrics = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, schedule_state=schedule_state, log_metrics=self.log_validation_sampler_metrics)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
 
         dataset = TensorDataset(segments[keep_indices], preferences, torch.ones(len(preferences)), torch.zeros(len(preferences)))
@@ -221,7 +221,7 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _log_validation_metrics(self, metrics: dict, prefix: str = ''):
-        if self.log_sampler_metrics and metrics.get('sampler_metrics') is not None:
+        if self.log_validation_sampler_metrics and metrics.get('sampler_metrics') is not None:
             self._log_metrics_stats(metrics.pop('sampler_metrics'), prefix=prefix)
 
         self.logger.record_with_progress(metrics, self.num_feed, self.training_progress, prefix=f'reward_model/eval/{prefix}')
@@ -253,7 +253,7 @@ class PrefPPOCallback(BasePrefCallback):
         segments, rewards = torch.load(path)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
         schedule_state = self._create_schedule_state()
-        sampler_metrics = self.sampler.compute_logging_metrics(segments, self.reward_model, schedule_state=schedule_state)
+        sampler_metrics = self.sampler.compute_logging_metrics({}, segments, reward_model=self.reward_model, schedule_state=schedule_state)
 
         dataset = TensorDataset(segments[keep_indices], preferences, torch.ones(len(preferences)), torch.zeros(len(preferences)))
         metrics = self._average_metrics(self._validate(dataset))

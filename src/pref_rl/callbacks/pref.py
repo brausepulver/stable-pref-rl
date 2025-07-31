@@ -58,7 +58,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.on_first_trained = on_first_trained
         self.on_trained = on_trained
         self.keep_all_eps = keep_all_eps or save_episode_data
-        self.uniform_frac = self.sampler_kwargs.get('uniform_fraction', 0.0) if self.sampler_metric != 'uniform' else 0.0
+        self.uniform_frac = self.sampler_kwargs.pop('uniform_fraction', 0.0) if self.sampler_metric != 'uniform' else 0.0
 
         if self.synth_schedule and not synth_buffer_size:
             raise ValueError('synth_buffer_size must be provided if synth_ratio is set')
@@ -98,8 +98,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         obs_size, act_size = self._get_input_sizes()
         self.buffer = EpisodeBuffer(self.training_env.num_envs, self.ann_buffer_size_eps, keep_all_eps=self.keep_all_eps)
-        self.sampler = Sampler(self.segment_size, obs_size, act_size, self.sampler_metric)
-        self.uniform_sampler = Sampler(self.segment_size, obs_size, act_size)
+        self.sampler = Sampler(self.segment_size, obs_size, act_size, self.sampler_metric, **self.sampler_kwargs)
+        self.uniform_sampler = Sampler(self.segment_size, obs_size, act_size, **self.sampler_kwargs)
         self.train_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher=self.train_teacher_kind, teacher_kwargs=self.teacher_kwargs)
 
         segment_dim = obs_size + act_size
@@ -138,13 +138,12 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_specific = num_samples - num_uniform
 
         schedule_state = self._create_schedule_state()
-        state_actions, rewards, metrics = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model, schedule_state=schedule_state)
+        state_actions, rewards, metrics = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model, schedule_state=schedule_state, log_metrics=self.log_sampler_metrics)
 
         if num_uniform > 0:
-            state_actions_uniform, rewards_uniform, _ = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model, schedule_state=schedule_state)
+            state_actions_uniform, rewards_uniform, _ = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model, schedule_state=schedule_state, log_metrics=False)
             state_actions = torch.cat([state_actions, state_actions_uniform], dim=0)
             rewards = torch.cat([rewards, rewards_uniform], dim=1)
-            metrics = sampler.compute_logging_metrics(state_actions, reward_model, schedule_state=schedule_state) if self.log_sampler_metrics else {}
 
         return state_actions, rewards, metrics
 

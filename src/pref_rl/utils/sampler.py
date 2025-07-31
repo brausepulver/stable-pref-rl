@@ -16,17 +16,13 @@ class NoValidEpisodesError(ValueError):
 
 class BaseSamplerMetric(ABC):
     @abstractmethod
-    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState]) -> torch.Tensor:
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState]) -> dict[str, torch.Tensor]:
         pass
 
     @property
     @abstractmethod
     def name(self) -> str:
         pass
-
-    def get_logging_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState]) -> dict[str, torch.Tensor]:
-        """Return all metrics this sampler wants to log."""
-        return {self.name: self.compute(state_action_pairs, reward_model, schedule_state)}
 
 
 class DisagreementMetric(BaseSamplerMetric):
@@ -38,9 +34,12 @@ class DisagreementMetric(BaseSamplerMetric):
         with torch.no_grad():
             device = next(reward_model.parameters()).device
             member_rewards = reward_model(state_action_pairs.to(device))
-            member_returns = einops.reduce(member_rewards, 'm n p s 1 -> m n p', 'sum')
-            probabilities = F.softmax(member_returns, dim=-1)
-            return probabilities[..., 0].std(dim=0)
+
+        member_returns = einops.reduce(member_rewards, 'm n p s 1 -> m n p', 'sum')
+        probabilities = F.softmax(member_returns, dim=-1)
+        values = probabilities[..., 0].std(dim=0)
+        return {self.name: values}
+
 
 
 class EntropyMetric(BaseSamplerMetric):
@@ -52,10 +51,12 @@ class EntropyMetric(BaseSamplerMetric):
         with torch.no_grad():
             device = next(reward_model.parameters()).device
             member_rewards = reward_model(state_action_pairs.to(device))
-            member_returns = einops.reduce(member_rewards, 'm n p s 1 -> m n p', 'sum')
-            probabilities = F.softmax(member_returns, dim=-1)
-            member_entropies = -torch.sum(probabilities * torch.log(probabilities), dim=-1)
-            return member_entropies.mean(dim=0)
+
+        member_returns = einops.reduce(member_rewards, 'm n p s 1 -> m n p', 'sum')
+        probabilities = F.softmax(member_returns, dim=-1)
+        member_entropies = -torch.sum(probabilities * torch.log(probabilities), dim=-1)
+        values = member_entropies.mean(dim=0)
+        return {self.name: values}
 
 
 class CompositeMetric(BaseSamplerMetric):
@@ -75,7 +76,10 @@ class CompositeMetric(BaseSamplerMetric):
         return self._name
 
     def _compute_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState):
-        return {name: metric.compute(state_action_pairs, reward_model, schedule_state) for name, metric in self.metrics.items()}
+        metrics = {}
+        for metric in self.metrics.values():
+            metrics |= metric.compute(state_action_pairs, reward_model, schedule_state)
+        return metrics
 
     def _aggregate_metrics(self, computed_metrics: dict[str, torch.Tensor], schedule_state: BaseScheduleState):
         weighted_values = []
@@ -87,31 +91,22 @@ class CompositeMetric(BaseSamplerMetric):
 
     def compute(self, state_action_pairs, reward_model, schedule_state):
         computed_metrics = self._compute_metrics(state_action_pairs, reward_model, schedule_state)
-        weighted_value = self._aggregate_metrics(computed_metrics, schedule_state)
-        return weighted_value
-
-    def get_logging_metrics(self, state_action_pairs, reward_model, schedule_state):
-        computed_metrics = self._compute_metrics(state_action_pairs, reward_model, schedule_state)
-        logging_metrics = computed_metrics
+        named_metrics = computed_metrics
         
         # Add the composite metric itself
-        logging_metrics[self.name] = self._aggregate_metrics(computed_metrics, schedule_state)
+        named_metrics[self.name] = self._aggregate_metrics(computed_metrics, schedule_state)
         
-        return logging_metrics
+        return named_metrics
 
 
 class Sampler:
-    def __init__(self, segment_size: int, observation_size: int, action_size: int, sampling_metric: Optional[BaseSamplerMetric] = None, pre_sample_multiplier: int = 10):
+    def __init__(self, segment_size: int, observation_size: int, action_size: int, sampling_metric: Optional[BaseSamplerMetric] = None, pre_sample_multiplier: int = 10, logging_metrics: Optional[list[BaseSamplerMetric]] = {}):
         self.segment_size = segment_size
         self.observation_size = observation_size
         self.action_size = action_size
         self.pre_sample_multiplier = pre_sample_multiplier
         self.sampling_metric = sampling_metric
-        
-        self.logging_metrics = {
-            'disagreement': DisagreementMetric(),
-            'entropy': EntropyMetric(),
-        }
+        self.logging_metrics = logging_metrics
 
 
     def _get_episode_indices(self, valid_episodes: list, num_samples: int, stratified: bool = False):
@@ -157,20 +152,15 @@ class Sampler:
         return ep_indices, state_actions, gt_rewards
 
 
-    def compute_logging_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState] = None):
-        metrics = {}
-        
-        if self.sampling_metric:
-            metrics.update(self.sampling_metric.get_logging_metrics(state_action_pairs, reward_model, schedule_state))
-
-        for metric_name, metric in self.logging_metrics.items():
-            if metric_name not in metrics:
-                metrics[metric_name] = metric.compute(state_action_pairs, reward_model, schedule_state)
+    def compute_logging_metrics(self, metrics: dict[str, torch.Tensor], state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState] = None):
+        for metric in self.logging_metrics:
+            if metric.name not in metrics:
+                metrics |= metric.compute(state_action_pairs, reward_model, schedule_state)
         
         return metrics
 
 
-    def sample_pairs(self, episodes: list, episode_ages: list, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, compute_uniform_metrics: bool = True, schedule_state: Optional[BaseScheduleState] = None):
+    def sample_pairs(self, episodes: list, episode_ages: list, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, schedule_state: Optional[BaseScheduleState] = None, log_metrics: bool = True):
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
@@ -180,15 +170,16 @@ class Sampler:
         state_action_pairs = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
         reward_pairs = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
 
-        if method != 'uniform' or compute_uniform_metrics:
-            metrics = self.compute_logging_metrics(state_action_pairs, reward_model, schedule_state)
-        else:
-            metrics = {}
+        metrics = {}
+        if method != 'uniform':
+            assert self.sampling_metric
+            metrics = self.sampling_metric.compute(state_action_pairs, reward_model, schedule_state)
+
+        if log_metrics:
+            metrics = self.compute_logging_metrics(metrics, state_action_pairs, reward_model, schedule_state)
 
         if method == 'uniform':
             return state_action_pairs, reward_pairs, metrics
 
-        assert self.sampling_metric
-        sampling_scores = self.sampling_metric.compute(state_action_pairs, reward_model, schedule_state)
-        idx = torch.topk(sampling_scores, num_samples).indices.to('cpu')
+        idx = torch.topk(metrics[self.sampling_metric.name], num_samples).indices.to('cpu')
         return state_action_pairs[idx], reward_pairs[:, idx], metrics

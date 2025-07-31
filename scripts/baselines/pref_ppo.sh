@@ -7,6 +7,7 @@ BASE_PARAMS=(
     "preset=pref_ppo/quadruped_walk"
     "training.total_timesteps=2000000"
     "preset.method.clip_range.end=0.2"
+    "+preset.method.pref.sampler_kwargs.logging_metrics=[{_target_: pref_rl.utils.sampler.DisagreementMetric}, {_target_: pref_rl.utils.sampler.EntropyMetric}]"
     # "preset.method.save_callback_data=true"
     # "preset.method.save_episode_data=true"
 )
@@ -15,10 +16,10 @@ BASE_PARAMS=(
 for i in $(seq 1 $N_RUNS); do
     seed=$((1000 * i))
     outb stage uv run train \
-        ${BASE_PARAMS[@]} \
-        training.seed=$seed \
-        preset.method.pref.sampler=uniform \
-        'logging.tags=[pref_ppo,baseline,uniform]' \
+        "${BASE_PARAMS[@]}" \
+        "training.seed=${seed}" \
+        "preset.method.pref.sampler=uniform" \
+        "logging.tags=[pref_ppo, baseline, uniform]" \
         "logging.group=pref_ppo/baseline/uniform"
 done
 
@@ -26,10 +27,10 @@ done
 for i in $(seq 1 $N_RUNS); do
     seed=$((1000 * i))
     outb stage uv run train \
-        ${BASE_PARAMS[@]} \
-        training.seed=$seed \
-        preset.method.pref.sampler=disagreement \
-        'logging.tags=[pref_ppo,baseline,disagreement]' \
+        "${BASE_PARAMS[@]}" \
+        "training.seed=${seed}" \
+        "preset.method.pref.sampler=disagreement" \
+        'logging.tags=[pref_ppo, baseline, disagreement]' \
         "logging.group=pref_ppo/baseline/disagreement"
 done
 
@@ -37,9 +38,9 @@ done
 for i in $(seq 1 $N_RUNS); do
     seed=$((1000 * i))
     outb stage uv run train \
-        ${BASE_PARAMS[@]} \
-        training.seed=$seed \
-        preset.method.pref.sampler=entropy \
-        'logging.tags=[pref_ppo,baseline,entropy]' \
+        "${BASE_PARAMS[@]}" \
+        "training.seed=${seed}" \
+        "preset.method.pref.sampler=entropy" \
+        'logging.tags=[pref_ppo, baseline, entropy]' \
         "logging.group=pref_ppo/baseline/entropy"
 done
