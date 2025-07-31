@@ -58,7 +58,7 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.on_first_trained = on_first_trained
         self.on_trained = on_trained
         self.keep_all_eps = keep_all_eps or save_episode_data
-        self.uniform_frac = self.sampler_kwargs.pop('uniform_fraction', 0.0) if self.sampler_metric != 'uniform' else 0.0
+        self.uniform_frac = self.sampler_kwargs.pop('uniform_fraction', 0.0)
 
         if self.synth_schedule and not synth_buffer_size:
             raise ValueError('synth_buffer_size must be provided if synth_ratio is set')
