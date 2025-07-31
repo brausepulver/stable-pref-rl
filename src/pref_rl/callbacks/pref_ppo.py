@@ -7,10 +7,10 @@ from hydra.utils import to_absolute_path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset, Dataset, ConcatDataset
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 
 from .pref import BasePrefCallback
-from ..utils.data import MaskedDataset
 from ..utils.reward_models import RewardModel, MultiHeadMember, MultiHeadRewardModel
 from ..utils.sampler import NoValidEpisodesError
 from ..utils.schedules import PrefPPOScheduleState
@@ -35,7 +35,8 @@ class PrefPPOCallback(BasePrefCallback):
         log_validation_sampler_metrics: bool = True,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
-        num_samples_ep_age: Optional[int] = None,
+        num_samples_ep_age: int = 0,
+        ep_age_loss_weight: float = 0.0,
         ep_age_reward_weight: float = 0.0,
         **kwargs
     ):
@@ -56,6 +57,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.log_validation_sampler_metrics = log_validation_sampler_metrics
         self.ensemble_agg_fn = ensemble_agg_fn
         self.num_samples_ep_age = num_samples_ep_age
+        self.ep_age_loss_weight = ep_age_loss_weight
         self.ep_age_reward_weight = ep_age_reward_weight
 
         self.reward_model_cls = {
@@ -147,7 +149,17 @@ class PrefPPOCallback(BasePrefCallback):
         return metrics
 
 
-    def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset, ep_ages_dataset: Optional[Dataset]):
+    def _get_episode_ages_dataset(self, num_samples: int, normalize_const: int):
+        episodes = self.buffer.get_episodes()
+        episode_ages = self.buffer.get_episode_ages()
+        normalized_ep_ages = episode_ages / normalize_const
+
+        ep_indices, segments, _ = self.uniform_sampler.sample_segments(episodes, num_samples)
+        segment_ages = normalized_ep_ages[ep_indices]
+        return TensorDataset(segments, segment_ages)
+
+
+    def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset):
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         metrics = []
 
@@ -162,47 +174,33 @@ class PrefPPOCallback(BasePrefCallback):
 
             metrics.append(self._compute_batch_metrics(losses, correct, mask))
 
-        if ep_ages_dataset is None:
+        if self.num_samples_ep_age == 0 or self.ep_age_loss_weight == 0:
             return metrics
 
+        ep_ages_dataset = self._get_episode_ages_dataset(self.num_samples_ep_age, normalize_const=320_000)
         ages_dataloader = DataLoader(ep_ages_dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
 
         for segments, segment_ages in ages_dataloader:
             optimizer.zero_grad()
 
             assert isinstance(member, MultiHeadMember)
-            predictions = member.auxiliary(segments)
+            predictions = F.sigmoid(member.auxiliary(segments))
 
             criterion = nn.MSELoss()
-            loss = criterion(predictions, segment_ages)
-            loss.backward()
+            losses = self.ep_age_loss_weight * criterion(predictions, segment_ages)
+            losses.backward()
             optimizer.step()
 
-            metrics.append({'age_loss': loss})
+            metrics.append({'age_loss': losses.mean().item()})
 
         return metrics
 
 
-    def _get_episode_ages_dataset(self, num_samples: int):
-        episodes = self.buffer.get_episodes()
-        episode_ages = self.buffer.get_episode_ages()
-        normalized_ep_ages = episode_ages / self.model._total_timesteps
-
-        ep_indices, segments, _ = self.uniform_sampler.sample_segments(episodes, num_samples)
-        segment_ages = normalized_ep_ages[ep_indices]
-        return TensorDataset(segments, segment_ages)
-
-
     def _train_reward_model_epoch(self, dataset):
-        if self.num_samples_ep_age is not None:
-            ep_ages_dataset = self._get_episode_ages_dataset(self.num_samples_ep_age)
-        else:
-            ep_ages_dataset = None
-
         metrics = []
         for index, member in enumerate(self.reward_model.members):
             optimizer = self.rew_optimizers[index]
-            member_metrics = self._train_member_epoch(member, optimizer, dataset, ep_ages_dataset)
+            member_metrics = self._train_member_epoch(member, optimizer, dataset)
             metrics.append(member_metrics)
         return metrics
 

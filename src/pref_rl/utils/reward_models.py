@@ -28,13 +28,13 @@ class MultiHeadMember(nn.Module):
 
     def forward(self, x):
         output = self.head(self.trunk(x))
-        first_head = self.output_fn(output[:, 0])
+        first_head = self.output_fn(output[..., 0:1])
         return first_head
 
 
     def auxiliary(self, x):
         output = self.head(self.trunk(x))
-        return output[:, 1:]
+        return output[..., 1:]
 
 
 class MultiHeadRewardModel(nn.Module):
@@ -48,8 +48,10 @@ class MultiHeadRewardModel(nn.Module):
             input_dim,
             net_arch=net_arch[:-1],
             activation_fn=activation_fn,
+            output_fn=None,
+            output_dim=net_arch[-1],
         )
-        head = nn.Linear(net_arch[-1], n_heads, bias=False)
+        head = nn.Linear(net_arch[-1], n_heads)
         
         return MultiHeadMember(trunk, head, output_fn)
 
