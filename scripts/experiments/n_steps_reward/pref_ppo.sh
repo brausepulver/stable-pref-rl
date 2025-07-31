@@ -5,8 +5,8 @@ N_RUNS=${1:-56}
 BASE_PARAMS=(
     'hydra.run.dir=outputs/${oc.env:JOB_ID}'
     "preset=pref_ppo/quadruped_walk"
-    "training.total_timesteps=100000"
-    "preset.method.clip_range.end=0.3"
+    "training.total_timesteps=2000000"
+    "preset.method.clip_range.end=0.4"
 )
 
 # Disagreement sampling
