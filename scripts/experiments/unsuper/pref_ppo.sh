@@ -6,8 +6,6 @@ N_RUNS_SMALL=${1:-56}
 PRETRAIN_STEPS=(
     null
     8000
-    16000
-    48000
     64000
 )
 
@@ -26,10 +24,10 @@ for n_steps in "${PRETRAIN_STEPS[@]}"; do
         seed=$((1000 * i))
 
         outb stage uv run train \
-            ${BASE_PARAMS[@]} \
-            training.seed=$seed \
-            preset.method.unsuper.n_steps_unsuper=$n_steps \
-            preset.method.pref.sampler=uniform \
+            "${BASE_PARAMS[@]}" \
+            "training.seed=${seed}" \
+            "preset.method.unsuper.n_steps_unsuper=${n_steps}" \
+            "preset.method.pref.sampler=uniform" \
             "logging.tags=[pref_ppo, experiment, uniform, unsuper]" \
             "logging.group=pref_ppo/unsuper/${n_steps}/uniform"
     done
@@ -40,10 +38,10 @@ for n_steps in "${PRETRAIN_STEPS[@]}"; do
         seed=$((1000 * i))
 
         outb stage uv run train \
-            ${BASE_PARAMS[@]} \
+            "${BASE_PARAMS[@]}" \
             training.seed=$seed \
-            preset.method.unsuper.n_steps_unsuper=$n_steps \
-            preset.method.pref.sampler=disagreement \
+            "preset.method.unsuper.n_steps_unsuper=${n_steps}" \
+            "preset.method.pref.sampler=disagreement" \
             "logging.tags=[pref_ppo, experiment, disagreement, unsuper]" \
             "logging.group=pref_ppo/unsuper/${n_steps}/disagreement"
     done
@@ -54,10 +52,10 @@ for n_steps in "${PRETRAIN_STEPS[@]}"; do
         seed=$((1000 * i))
 
         outb stage uv run train \
-            ${BASE_PARAMS[@]} \
-            training.seed=$seed \
-            preset.method.unsuper.n_steps_unsuper=$n_steps \
-            preset.method.pref.sampler=entropy \
+            "${BASE_PARAMS[@]}" \
+            "training.seed=${seed}" \
+            "preset.method.unsuper.n_steps_unsuper=${n_steps}" \
+            "preset.method.pref.sampler=entropy" \
             "logging.tags=[pref_ppo, experiment, entropy, unsuper]" \
             "logging.group=pref_ppo/unsuper/${n_steps}/entropy"
     done

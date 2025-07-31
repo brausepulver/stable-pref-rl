@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-N_RUNS=N_RUNS=${1:-56}
+N_RUNS=${1:-56}
 
 BASE_PARAMS=(
     'hydra.run.dir=outputs/${oc.env:JOB_ID}'
@@ -10,16 +10,17 @@ BASE_PARAMS=(
 )
 
 # Disagreement sampling
-for feed_batch_size in 50 100 150 300 400 500; do
+for feed_batch_size in 50 100 300 500; do
     for i in $(seq 1 $N_RUNS); do
         seed=$((1000 * i))
 
         outb stage uv run train \
-            ${BASE_PARAMS[@]} \
-            training.seed=$seed \
-            preset.method.pref.feed_batch_size=$feed_batch_size \
-            "logging.tags=[pref_ppo, experiment, disagreement, schedules]" \
-            "logging.group=pref_ppo/schedules/feed_batch_size_$feed_batch_size"
+            "${BASE_PARAMS[@]}" \
+            "training.seed=${seed}" \
+            "preset.method.pref.sampler=disagreement" \
+            "preset.method.pref.feed_batch_size=${feed_batch_size}" \
+            "logging.tags=[pref_ppo, experiment, disagreement, schedules, feed_batch_size]" \
+            "logging.group=pref_ppo/feed_batch_size/${feed_batch_size}"
     done
     wait
 done
