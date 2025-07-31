@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
-N_RUNS_LARGE=${1:-168}
-N_RUNS_SMALL=${1:-56}
+N_RUNS=${1:-56}
 
 PRETRAIN_STEPS=(
     null
     8000
+    16000
     64000
 )
 
@@ -17,10 +17,8 @@ BASE_PARAMS=(
 )
 
 for n_steps in "${PRETRAIN_STEPS[@]}"; do
-    n_runs=$([[ "$n_steps" == "null" ]] && echo $N_RUNS_LARGE || echo $N_RUNS_SMALL)
-
     # Uniform sampling
-    for i in $(seq 1 $n_runs); do
+    for i in $(seq 1 $N_RUNS); do
         seed=$((1000 * i))
 
         outb stage uv run train \
@@ -31,10 +29,9 @@ for n_steps in "${PRETRAIN_STEPS[@]}"; do
             "logging.tags=[pref_ppo, experiment, uniform, unsuper]" \
             "logging.group=pref_ppo/unsuper/${n_steps}/uniform"
     done
-    wait
     
     # Disagreement sampling
-    for i in $(seq 1 $n_runs); do
+    for i in $(seq 1 $N_RUNS); do
         seed=$((1000 * i))
 
         outb stage uv run train \
@@ -45,19 +42,4 @@ for n_steps in "${PRETRAIN_STEPS[@]}"; do
             "logging.tags=[pref_ppo, experiment, disagreement, unsuper]" \
             "logging.group=pref_ppo/unsuper/${n_steps}/disagreement"
     done
-    wait
-    
-    # Entropy sampling
-    for i in $(seq 1 $n_runs); do
-        seed=$((1000 * i))
-
-        outb stage uv run train \
-            "${BASE_PARAMS[@]}" \
-            "training.seed=${seed}" \
-            "preset.method.unsuper.n_steps_unsuper=${n_steps}" \
-            "preset.method.pref.sampler=entropy" \
-            "logging.tags=[pref_ppo, experiment, entropy, unsuper]" \
-            "logging.group=pref_ppo/unsuper/${n_steps}/entropy"
-    done
-    wait
 done

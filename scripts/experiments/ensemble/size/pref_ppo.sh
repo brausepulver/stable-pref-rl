@@ -16,7 +16,7 @@ for ensemble_size in 5 7 10 15; do
 
         outb stage uv run train \
             "${BASE_PARAMS[@]}" \
-            "training.seed=$seed" \
+            "training.seed=${seed}" \
             "preset.method.pref.sampler=disagreement" \
             "preset.method.pref.reward_model_kwargs.ensemble_size=${ensemble_size}" \
             "logging.tags=[pref_ppo, experiment, disagreement, ensemble, ensemble_size]" \
