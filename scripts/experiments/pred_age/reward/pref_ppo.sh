@@ -1,3 +1,5 @@
+// scripts/experiments/pred_age/auxiliary/pref_ppo.sh
+
 #!/usr/bin/env bash
 
 N_RUNS=${1:-56}
@@ -12,8 +14,10 @@ BASE_PARAMS=(
     "preset.method.pref.validate_on_held_out=false"
 )
 
+loss_weight=10
+
 # Disagreement sampling
-for loss_weight in 0.1 0.5 1.0 10 100; do
+for reward_weight in 0.01 0.1 1 10; do
     for i in $(seq 1 $N_RUNS); do
         seed=$((1000 * i))
         outb stage uv run train \
@@ -22,7 +26,8 @@ for loss_weight in 0.1 0.5 1.0 10 100; do
             "preset.method.pref.sampler=disagreement" \
             "+preset.method.pref.ep_age_loss_weight=${loss_weight}" \
             "+preset.method.pref.reward_model_kind=multi_head_reward_model" \
+            "+preset.method.pref.ep_age_reward_weight=${reward_weight}" \
             'logging.tags=[pref_ppo, experiment, pred_age, disagreement]' \
-            "logging.group=pref_ppo/pred_age/loss_shared/${loss_weight}"
+            "logging.group=pref_ppo/pred_age/loss_shared_rew/${loss_weight}"
     done
 done

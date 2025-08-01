@@ -35,7 +35,6 @@ class PrefPPOCallback(BasePrefCallback):
         log_validation_sampler_metrics: bool = True,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
-        num_samples_ep_age: int = 0,
         ep_age_loss_weight: float = 0.0,
         ep_age_reward_weight: float = 0.0,
         **kwargs
@@ -56,7 +55,6 @@ class PrefPPOCallback(BasePrefCallback):
         self.log_held_out_sampler_metrics = log_held_out_sampler_metrics
         self.log_validation_sampler_metrics = log_validation_sampler_metrics
         self.ensemble_agg_fn = ensemble_agg_fn
-        self.num_samples_ep_age = num_samples_ep_age
         self.ep_age_loss_weight = ep_age_loss_weight
         self.ep_age_reward_weight = ep_age_reward_weight
 
@@ -309,7 +307,7 @@ class PrefPPOCallback(BasePrefCallback):
                 )
             pred_rewards = self.ensemble_agg_fn(member_rewards)
 
-        if self.ep_age_reward_weight > 0:
+        if self.ep_age_reward_weight > 0 and not self.n_steps_train_end:
             with torch.no_grad():
                 member_ages = torch.stack([F.sigmoid(member.auxiliary(state_actions)) for member in self.reward_model.members])
                 pred_ages = torch.mean(member_ages, dim=0)
