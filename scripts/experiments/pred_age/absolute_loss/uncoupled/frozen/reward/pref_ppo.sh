@@ -4,6 +4,7 @@ N_RUNS=${1:-56}
 
 BASE_PARAMS=(
     'hydra.run.dir=outputs/${oc.env:JOB_ID}'
+    "logging.project=pref_rl_pred_age"
     "preset=pref_ppo/quadruped_walk"
     "training.total_timesteps=2000000"
     "preset.method.clip_range.end=0.2"
