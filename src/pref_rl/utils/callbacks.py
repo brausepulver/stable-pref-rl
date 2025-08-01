@@ -43,6 +43,7 @@ def get_default_callbacks():
         'pred_r_std_member': 'reward_model/avg_member_std_ep',
         'pred_r_uncertainty': 'reward_model/avg_ensemble_std_step',
         'r': 'rollout/ep_rew_mean_current',
-        'pred_age': 'pref/pred_age',
+        'pred_r_age': 'pref/pred_r_age',
+        'pred_r_total': 'pref/pred_r_total',
     }
     return LogRolloutStatsCallback(ep_info_log_keys)

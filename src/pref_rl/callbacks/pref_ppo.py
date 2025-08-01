@@ -88,7 +88,8 @@ class PrefPPOCallback(BasePrefCallback):
         super()._init_callback()
 
         self.ensemble_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
-        self.age_reward_buffer = [[] for _ in range(self.training_env.num_envs)]
+        self.age_reward_buffer = []
+        self.total_reward_buffer = []
 
         obs_size, act_size = self._get_input_sizes()
         self.reward_model = self.reward_model_cls(obs_size + act_size, **self.reward_model_kwargs).to(self.device)
@@ -315,6 +316,7 @@ class PrefPPOCallback(BasePrefCallback):
                 self.age_reward_buffer.append(age_rewards)
                 pred_rewards += age_rewards
 
+        self.total_reward_buffer.append(pred_rewards)
         return pred_rewards
 
 
@@ -341,9 +343,15 @@ class PrefPPOCallback(BasePrefCallback):
                 
                 self.ensemble_reward_buffer[env_idx] = []
 
-            if self.age_reward_buffer[env_idx]:
-                ep_age_rew_mean = np.mean(self.age_reward_buffer[env_idx])
-                ep_info['pred_age'] = ep_age_rew_mean
+            if self.age_reward_buffer:
+                ep_age_rew_mean = np.mean(self.age_reward_buffer)
+                ep_info['pred_r_age'] = ep_age_rew_mean
+                self.age_reward_buffer = []
+
+            if self.total_reward_buffer:
+                ep_total_rew_mean = np.mean(self.total_reward_buffer)
+                ep_info['pred_r_total'] = ep_total_rew_mean
+                self.total_reward_buffer = []
 
 
     def _on_training_start(self) -> None:
