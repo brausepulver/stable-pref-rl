@@ -102,6 +102,8 @@ class PrefPPOCallback(BasePrefCallback):
 
         self.eval_teacher = Teacher(segment_size=self.segment_size, observation_size=obs_size, action_size=act_size, teacher='oracle')
 
+        self.policy_version = 0
+
 
     def _get_predictor(self):
         return self.reward_model
@@ -149,49 +151,28 @@ class PrefPPOCallback(BasePrefCallback):
         return metrics
 
 
-    def _get_episode_ages_dataset(self, num_samples: int, normalize_const: int):
-        episodes = self.buffer.get_episodes()
-        episode_ages = self.buffer.get_episode_ages()
-        normalized_ep_ages = episode_ages / normalize_const
-
-        ep_indices, segments, _ = self.uniform_sampler.sample_segments(episodes, num_samples)
-        segment_ages = normalized_ep_ages[ep_indices]
-        return TensorDataset(segments, segment_ages)
-
-
     def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset):
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         metrics = []
 
-        for segments, preferences, weights, _, mask in dataloader:
+        for segments, preferences, weights, segment_ages, mask in dataloader:
             optimizer.zero_grad()
 
             pred_rewards = member(segments)
-            losses, correct = self._compute_loss(pred_rewards, preferences, weights)
-
-            losses.sum().backward()
-            optimizer.step()
-
-            metrics.append(self._compute_batch_metrics(losses, correct, mask))
-
-        if self.num_samples_ep_age == 0 or self.ep_age_loss_weight == 0:
-            return metrics
-
-        ep_ages_dataset = self._get_episode_ages_dataset(self.num_samples_ep_age, normalize_const=320_000)
-        ages_dataloader = DataLoader(ep_ages_dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
-
-        for segments, segment_ages in ages_dataloader:
-            optimizer.zero_grad()
+            pref_loss, correct = self._compute_loss(pred_rewards, preferences, weights)
 
             assert isinstance(member, MultiHeadMember)
-            predictions = F.sigmoid(member.auxiliary(segments))
+            pred_ages = F.sigmoid(member.auxiliary(segments))
+            normalized_ages = segment_ages / self.num_timesteps
 
             criterion = nn.MSELoss()
-            losses = self.ep_age_loss_weight * criterion(predictions, segment_ages)
-            losses.backward()
+            age_loss = criterion(pred_ages.squeeze(-1).mean(dim=-1), normalized_ages)
+
+            loss = pref_loss.sum() + self.ep_age_loss_weight * age_loss
+            loss.backward()
             optimizer.step()
 
-            metrics.append({'age_loss': losses.mean().item()})
+            metrics.append(self._compute_batch_metrics(pref_loss, correct, mask) | {'age_loss': age_loss.item()})
 
         return metrics
 
@@ -330,11 +311,9 @@ class PrefPPOCallback(BasePrefCallback):
 
         if self.ep_age_reward_weight > 0:
             with torch.no_grad():
-                member_ages = [member.auxiliary(state_actions) for member in self.reward_model.members]
-                pred_ages = torch.mean(member_ages, dim=-1)
-                current_age = next(ep[0] for ep in self.buffer.running_eps)
-                age_diffs = torch.abs(current_age - pred_ages)
-                age_rewards = self.ep_age_reward_weight * (1 - age_diffs)
+                member_ages = torch.stack([F.sigmoid(member.auxiliary(state_actions)) for member in self.reward_model.members])
+                pred_ages = torch.mean(member_ages, dim=0)
+                age_rewards = self.ep_age_reward_weight * pred_ages
                 self.age_reward_buffer.append(age_rewards)
                 pred_rewards += age_rewards
 
@@ -370,7 +349,13 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _on_training_start(self) -> None:
+        super()._on_training_start()
         self.done_eps_since_eval = 0
+
+    
+    def _on_rollout_start(self):
+        super()._on_rollout_start()
+        self.policy_version += 1
 
 
     def _on_step(self):
