@@ -19,22 +19,37 @@ class RewardModel(nn.Module):
 
 
 class MultiHeadMember(nn.Module):
-    def __init__(self, trunk, head, output_fn):
+    def __init__(self, trunk, pref_head, aux_head, output_fn):
         super().__init__()
         self.trunk = trunk
-        self.head = head
+        self.pref_head = pref_head
+        self.aux_head = aux_head
         self.output_fn = output_fn
 
 
     def forward(self, x):
-        output = self.head(self.trunk(x))
-        first_head = self.output_fn(output[..., 0:1])
-        return first_head
+        trunk_output = self.trunk(x)
+        pref_output = self.pref_head(trunk_output)
+        return self.output_fn(pref_output)
 
 
     def auxiliary(self, x):
-        output = self.head(self.trunk(x))
-        return output[..., 1:]
+        trunk_output = self.trunk(x)
+        return self.aux_head(trunk_output)
+
+
+    def freeze_pref(self):
+        for param in self.trunk.parameters():
+            param.requires_grad = False
+        for param in self.pref_head.parameters():
+            param.requires_grad = False
+
+
+    def unfreeze_pref(self):
+        for param in self.trunk.parameters():
+            param.requires_grad = True
+        for param in self.pref_head.parameters():
+            param.requires_grad = True
 
 
 class MultiHeadRewardModel(nn.Module):
@@ -51,9 +66,10 @@ class MultiHeadRewardModel(nn.Module):
             output_fn=None,
             output_dim=net_arch[-1],
         )
-        head = nn.Linear(net_arch[-1], n_heads)
+        pref_head = nn.Linear(net_arch[-1], 1)
+        aux_head = nn.Linear(net_arch[-1], n_heads - 1)
         
-        return MultiHeadMember(trunk, head, output_fn)
+        return MultiHeadMember(trunk, pref_head, aux_head, output_fn)
 
 
     def forward(self, x):

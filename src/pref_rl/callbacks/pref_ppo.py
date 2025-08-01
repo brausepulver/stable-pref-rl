@@ -35,8 +35,12 @@ class PrefPPOCallback(BasePrefCallback):
         log_validation_sampler_metrics: bool = True,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
-        ep_age_loss_weight: float = 0.0,
-        ep_age_reward_weight: float = 0.0,
+        recency_loss_weight: float = 0.0,
+        recency_reward_weight: float = 0.0,
+        num_samples_recency: int = 0,
+        recency_loss_coupled: bool = True,
+        recency_freeze_pref_heads: bool = False,
+        recency_loss_type: str = 'relative',
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -55,8 +59,12 @@ class PrefPPOCallback(BasePrefCallback):
         self.log_held_out_sampler_metrics = log_held_out_sampler_metrics
         self.log_validation_sampler_metrics = log_validation_sampler_metrics
         self.ensemble_agg_fn = ensemble_agg_fn
-        self.ep_age_loss_weight = ep_age_loss_weight
-        self.ep_age_reward_weight = ep_age_reward_weight
+        self.recency_loss_weight = recency_loss_weight
+        self.recency_reward_weight = recency_reward_weight
+        self.num_samples_recency = num_samples_recency
+        self.recency_loss_coupled = recency_loss_coupled
+        self.recency_freeze_pref_heads = recency_freeze_pref_heads
+        self.recency_loss_type = recency_loss_type
 
         self.reward_model_cls = {
             'reward_model': RewardModel,
@@ -150,6 +158,14 @@ class PrefPPOCallback(BasePrefCallback):
         return metrics
 
 
+    def _get_episode_ages_dataset(self, num_samples: int):
+        episodes = self.buffer.get_episodes()
+        episode_ages = self.buffer.get_episode_ages()
+        ep_indices, segments, _ = self.uniform_sampler.sample_segments(episodes, num_samples)
+        segment_ages = episode_ages[ep_indices]
+        return TensorDataset(segments, segment_ages)
+
+
     def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset):
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         metrics = []
@@ -160,18 +176,61 @@ class PrefPPOCallback(BasePrefCallback):
             pred_rewards = member(segments)
             pref_loss, correct = self._compute_loss(pred_rewards, preferences, weights)
 
+            if self.recency_loss_type == 'relative':
+                normalized_ages = segment_ages / self.num_timesteps
+            elif self.recency_loss_type == 'absolute':
+                normalized_ages = segment_ages / 320_000
+
             assert isinstance(member, MultiHeadMember)
             pred_ages = F.sigmoid(member.auxiliary(segments))
-            normalized_ages = segment_ages / self.num_timesteps
 
-            criterion = nn.MSELoss()
-            age_loss = criterion(pred_ages.squeeze(-1).mean(dim=-1), normalized_ages)
+            loss = pref_loss.sum()
 
-            loss = pref_loss.sum() + self.ep_age_loss_weight * age_loss
+            if self.recency_freeze_pref_heads:
+                member.freeze_pref()
+
+            if self.recency_loss_coupled:
+                criterion = nn.MSELoss()
+                age_loss = criterion(pred_ages.squeeze(-1).mean(dim=-1), normalized_ages)
+                loss += self.recency_loss_weight * age_loss
+
+            if self.recency_freeze_pref_heads:
+                member.unfreeze_pref()
+
             loss.backward()
             optimizer.step()
 
             metrics.append(self._compute_batch_metrics(pref_loss, correct, mask) | {'age_loss': age_loss.item()})
+
+        if not self.recency_loss_coupled:
+            return metrics
+
+        if self.recency_freeze_pref_heads:
+            self.reward_model.freeze_pref()
+
+        ep_ages_dataset = self._get_episode_ages_dataset(self.num_samples_recency)
+        ages_dataloader = DataLoader(ep_ages_dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
+
+        for segments, segment_ages in ages_dataloader:
+            optimizer.zero_grad()
+
+            if self.recency_loss_type == 'relative':
+                normalized_ages = segment_ages / self.num_timesteps
+            elif self.recency_loss_type == 'absolute':
+                normalized_ages = segment_ages / 320_000
+
+            assert isinstance(member, MultiHeadMember)
+            predictions = F.sigmoid(member.auxiliary(segments))
+
+            criterion = nn.MSELoss()
+            losses = self.recency_loss_weight * criterion(predictions, normalized_ages)
+            losses.backward()
+            optimizer.step()
+
+            metrics.append({'age_loss': losses.mean().item()})
+
+        if self.recency_freeze_pref_heads:
+            self.reward_model.unfreeze_pref()
 
         return metrics
 
@@ -308,11 +367,11 @@ class PrefPPOCallback(BasePrefCallback):
                 )
             pred_rewards = self.ensemble_agg_fn(member_rewards)
 
-        if self.ep_age_reward_weight > 0 and not self.n_steps_train_end:
+        if self.recency_reward_weight > 0 and not self.n_steps_train_end:
             with torch.no_grad():
                 member_ages = torch.stack([F.sigmoid(member.auxiliary(state_actions)) for member in self.reward_model.members])
                 pred_ages = torch.mean(member_ages, dim=0)
-                age_rewards = self.ep_age_reward_weight * pred_ages
+                age_rewards = self.recency_reward_weight * pred_ages
                 self.age_reward_buffer.append(age_rewards)
                 pred_rewards += age_rewards
 

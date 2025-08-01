@@ -69,9 +69,9 @@ class PredictedAgeMetric(BaseSamplerMetric):
         assert isinstance(reward_model, MultiHeadRewardModel)
         with torch.no_grad():
             device = next(reward_model.parameters()).device
-            member_step_ages = [member.auxiliary(state_action_pairs.to(device)) for member in reward_model.members]
+            member_step_ages = [F.sigmoid(member.auxiliary(state_action_pairs.to(device))) for member in reward_model.members]
             member_ages = einops.reduce(member_step_ages, 'm n p s 1 -> m n p', 'mean')
-            return -member_ages.mean(dim=0)
+            return member_ages.mean(dim=0)
 
 
 class CompositeMetric(BaseSamplerMetric):
