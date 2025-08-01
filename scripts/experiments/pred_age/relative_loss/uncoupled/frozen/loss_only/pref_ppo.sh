@@ -26,6 +26,7 @@ for loss_weight in 0.1 1 10; do
             "+preset.method.pref.recency_loss_type=relative" \
             "+preset.method.pref.recency_loss_coupled=false" \
             "+preset.method.pref.recency_freeze_pref_heads=true" \
+            "+preset.method.pref.num_samples_recency=1000" \
             'logging.tags=[pref_ppo, experiment, pred_age, disagreement]' \
             "logging.group=pref_ppo/pred_age/relative_loss/uncoupled/frozen/loss_only/${loss_weight}"
     done
