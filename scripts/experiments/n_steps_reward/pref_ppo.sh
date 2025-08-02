@@ -20,7 +20,7 @@ for n_steps_reward in 4000 8000 16000 64000 128000; do
             "preset.method.pref.sampler=disagreement" \
             "preset.method.pref.schedule.n_steps_reward=${n_steps_reward}" \
             "logging.tags=[pref_ppo, experiment, disagreement, schedules, n_steps_reward]" \
-            "logging.group=pref_ppo/n_steps_reward/disagreement/${n_steps_reward}"
+            "logging.group=pref_ppo/n_steps_reward/${n_steps_reward}/disagreement"
     done
     wait
 done

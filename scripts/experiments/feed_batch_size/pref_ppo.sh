@@ -20,7 +20,7 @@ for feed_batch_size in 50 100 300 500; do
             "preset.method.pref.sampler=disagreement" \
             "preset.method.pref.schedule.feed_batch_size=${feed_batch_size}" \
             "logging.tags=[pref_ppo, experiment, disagreement, schedules, feed_batch_size]" \
-            "logging.group=pref_ppo/feed_batch_size/${feed_batch_size}"
+            "logging.group=pref_ppo/feed_batch_size/${feed_batch_size}/disagreement"
     done
     wait
 done
