@@ -10,7 +10,7 @@ from ..utils.buffers import EpisodeBuffer, FeedbackBuffer
 from ..utils.data import MaskedDataset
 from ..utils.sampler import DisagreementMetric, EntropyMetric, Sampler
 from ..utils.schedules import PrefScheduleState
-from ..utils.synthetic import TemporalSynthesizer
+from ..utils.synthetic import BaseSynthesizer
 from ..utils.train_schedules import TrainingSchedule
 from ..utils.teacher import Teacher
 
@@ -29,8 +29,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         teacher_kwargs: dict = {},
         feed_buffer_size: int | None = None,
         synth_buffer_size: int | None = None,
-        synth_kwargs: Optional[dict] = None,
         synth_schedule: Optional[TrainingSchedule] = None,
+        synthesizer: Optional[BaseSynthesizer] = None,
         on_first_trained: Callable | None = None,
         on_trained: Callable | None = None,
         keep_all_eps: bool = False,
@@ -54,11 +54,11 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         self.feed_buf_size = feed_buffer_size or self.schedule.max_feed
         self.synth_schedule = synth_schedule
         self.synth_buffer_size = synth_buffer_size or 0
-        self.synth_kwargs = synth_kwargs or {}
         self.on_first_trained = on_first_trained
         self.on_trained = on_trained
         self.keep_all_eps = keep_all_eps or save_episode_data
         self.uniform_frac = self.sampler_kwargs.pop('uniform_fraction', 0.0)
+        self.synthesizer = synthesizer
 
         if self.synth_schedule and not synth_buffer_size:
             raise ValueError('synth_buffer_size must be provided if synth_ratio is set')
@@ -104,8 +104,6 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
         segment_dim = obs_size + act_size
         self.feed_buffer = FeedbackBuffer(self.feed_buf_size, self.segment_size, segment_dim, self.device)
-
-        self.synthesizer = TemporalSynthesizer(self.segment_size, obs_size, act_size, **self.synth_kwargs)
         self.synth_buffer = FeedbackBuffer(self.synth_buffer_size, self.segment_size, segment_dim, self.device)
 
         self.total_timesteps = self.model._total_timesteps
@@ -138,28 +136,28 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_specific = num_samples - num_uniform
 
         schedule_state = self._create_schedule_state()
-        state_actions, rewards, metrics = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model, schedule_state=schedule_state, log_metrics=self.log_sampler_metrics)
+        state_actions, rewards, metrics, segment_ages = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model, schedule_state=schedule_state, log_metrics=self.log_sampler_metrics)
 
         if num_uniform > 0:
-            state_actions_uniform, rewards_uniform, _ = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model, schedule_state=schedule_state, log_metrics=False)
+            state_actions_uniform, rewards_uniform, _, __ = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model, schedule_state=schedule_state, log_metrics=False)
             state_actions = torch.cat([state_actions, state_actions_uniform], dim=0)
             rewards = torch.cat([rewards, rewards_uniform], dim=1)
 
-        return state_actions, rewards, metrics
+        return state_actions, rewards, metrics, segment_ages
 
 
     def _expand_real_data(self, sampler: Sampler, num_samples: int):
         episodes = self.buffer.get_episodes()
         episode_ages = self.buffer.get_episode_ages()
         reward_model = self._get_predictor()
-        state_actions, rewards, sampler_metrics = self._sample_segments(sampler, episodes, episode_ages, num_samples, reward_model)
+        state_actions, rewards, sampler_metrics, segment_ages = self._sample_segments(sampler, episodes, episode_ages, num_samples, reward_model)
 
         if self.log_sampler_metrics and sampler_metrics:
             self._log_metrics_stats(sampler_metrics, prefix='sampler/')
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
         weights = torch.ones_like(preferences[keep_indices])
-        num_added = self.feed_buffer.add(state_actions[keep_indices], preferences[keep_indices], weights)
+        num_added = self.feed_buffer.add(state_actions[keep_indices], preferences[keep_indices], weights, segment_ages[keep_indices])
 
         if self.num_feed == self.schedule.max_feed:
             self.n_steps_train_end = self.num_timesteps

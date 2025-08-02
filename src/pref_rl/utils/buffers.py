@@ -52,11 +52,12 @@ class FeedbackBuffer:
         self.segments = torch.empty((buffer_size, 2, segment_size, segment_dimension), device=device).detach()
         self.preferences = torch.empty((buffer_size,), device=device).detach()
         self.weights = torch.empty((buffer_size,), device=device).detach()
+        self.segment_ages = torch.empty((buffer_size, 2), device=device).detach()
         self.position = 0
         self.size = 0
 
 
-    def add(self, segments: torch.Tensor, preferences: torch.Tensor, weights: torch.Tensor) -> int:
+    def add(self, segments: torch.Tensor, preferences: torch.Tensor, weights: torch.Tensor, segment_ages: torch.Tensor = None) -> int:
         """Add segments and preferences to the buffer with wraparound."""
         num_items = len(segments)
         segments = segments.to(self.device)
@@ -72,17 +73,23 @@ class FeedbackBuffer:
                 self.segments[start_pos:end_pos] = segments.detach()
                 self.preferences[start_pos:end_pos] = preferences.detach()
                 self.weights[start_pos:end_pos] = weights.detach()
+                if segment_ages is not None:
+                    self.segment_ages[start_pos:end_pos] = segment_ages.detach()
             else:
                 # Wraparound
                 first_chunk = self.buffer_size - start_pos
                 self.segments[start_pos:] = segments[:first_chunk].detach()
                 self.preferences[start_pos:] = preferences[:first_chunk].detach()
                 self.weights[start_pos:] = weights[:first_chunk].detach()
+                if segment_ages is not None:
+                    self.segment_ages[start_pos:] = segment_ages[:first_chunk].detach()
                 if end_pos > 0:
                     self.segments[:end_pos] = segments[first_chunk:].detach()
                     self.preferences[:end_pos] = preferences[first_chunk:].detach()
                     self.weights[:end_pos] = weights[first_chunk:].detach()
-            
+                    if segment_ages is not None:
+                        self.segment_ages[:end_pos] = segment_ages[first_chunk:].detach()
+
             self.position += num_items
             self.size = min(self.size + num_items, self.buffer_size)
 
@@ -90,7 +97,7 @@ class FeedbackBuffer:
 
 
     def get_dataset(self):
-        return TensorDataset(self.segments[:self.size], self.preferences[:self.size], self.weights[:self.size])
+        return TensorDataset(self.segments[:self.size], self.preferences[:self.size], self.weights[:self.size], self.segment_ages[:self.size])
 
 
     def clear(self):

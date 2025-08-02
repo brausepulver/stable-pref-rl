@@ -32,11 +32,7 @@ method:
     validate_on_held_out: true
     held_out_data_path: data/validation_data.pkl
 
-    synth_buffer_size: 100_000
-    synth_kwargs:
-      neg_eps_until_steps: 100000
-      pos_eps_after_eq_steps: 50000
-      loss_weight: 0.5
+    synth_buffer_size: 0
     synth_schedule: null
       # _target_: pref_rl.utils.train_schedules.BasePrefSchedule
       # n_steps_reward: 32_000

@@ -138,7 +138,7 @@ class PrefPPOCallback(BasePrefCallback):
         dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
         metrics = []
 
-        for segments, preferences, weights, mask in dataloader:
+        for segments, preferences, weights, _, mask in dataloader:
             optimizer.zero_grad()
 
             pred_rewards = member(segments)
@@ -211,7 +211,7 @@ class PrefPPOCallback(BasePrefCallback):
 
     def _validate_on_episodes(self, episodes, episode_ages, size: int):
         schedule_state = self._create_schedule_state()
-        segments, rewards, sampler_metrics = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, schedule_state=schedule_state, log_metrics=self.log_validation_sampler_metrics)
+        segments, rewards, sampler_metrics, _ = self.sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, schedule_state=schedule_state, log_metrics=self.log_validation_sampler_metrics)
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
 
         dataset = TensorDataset(segments[keep_indices], preferences, torch.ones(len(preferences)), torch.zeros(len(preferences)))

@@ -160,7 +160,7 @@ class Sampler:
         return metrics
 
 
-    def sample_pairs(self, episodes: list, episode_ages: list, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, schedule_state: Optional[BaseScheduleState] = None, log_metrics: bool = True):
+    def sample_pairs(self, episodes: list, episode_ages: torch.Tensor, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, schedule_state: Optional[BaseScheduleState] = None, log_metrics: bool = True):
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
@@ -169,6 +169,7 @@ class Sampler:
 
         state_action_pairs = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
         reward_pairs = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
+        segment_ages = einops.rearrange(episode_ages[ep_indices], '(n p) -> n p', p=2)
 
         metrics = {}
         if method != 'uniform':
@@ -179,7 +180,7 @@ class Sampler:
             metrics = self.compute_logging_metrics(metrics, state_action_pairs, reward_model, schedule_state)
 
         if method == 'uniform':
-            return state_action_pairs, reward_pairs, metrics
+            return state_action_pairs, reward_pairs, metrics, segment_ages
 
         idx = torch.topk(metrics[self.sampling_metric.name], num_samples).indices.to('cpu')
-        return state_action_pairs[idx], reward_pairs[:, idx], metrics
+        return state_action_pairs[idx], reward_pairs[:, idx], metrics, segment_ages
