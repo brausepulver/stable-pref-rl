@@ -16,7 +16,7 @@ BASE_PARAMS=(
 loss_weight=1
 
 # Disagreement sampling
-for reward_weight in 0.01 0.1 1 10; do
+for reward_weight in 0.1 0.5; do
     for i in $(seq 1 $N_RUNS); do
         seed=$((1000 * i))
         outb stage uv run train \
@@ -31,6 +31,6 @@ for reward_weight in 0.01 0.1 1 10; do
             "+preset.method.pref.recency_freeze_pref_heads=true" \
             "+preset.method.pref.num_samples_recency=1000" \
             'logging.tags=[pref_ppo, experiment, pred_age, disagreement]' \
-            "logging.group=pref_ppo/pred_age/absolute_loss/uncoupled/frozen/reward/${reward_weight}"
+            "logging.group=pref_ppo/pred_age/absolute_loss/uncoupled/frozen/${loss_weight}/reward/${reward_weight}"
     done
 done
