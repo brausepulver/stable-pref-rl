@@ -46,6 +46,9 @@ class BasePrefSchedule(TrainingSchedule):
 
     def _is_training_checkpoint(self, num_timesteps: int, num_envs: int) -> bool:
         """Determine if training should occur at this timestep."""
+        if self.n_steps_first_train is None:
+            return False
+
         step_remainder = (num_timesteps - self.n_steps_first_train) % self.n_steps_reward
         should_train = num_timesteps >= self.n_steps_first_train and step_remainder < num_envs
 

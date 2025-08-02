@@ -14,6 +14,7 @@ BASE_PARAMS=(
     "preset=pref_ppo/quadruped_walk"
     "training.total_timesteps=2000000"
     "preset.method.clip_range.end=0.2"
+    "+preset.method.pref.schedule.n_steps_first_train=32000"
 )
 
 for n_steps in "${PRETRAIN_STEPS[@]}"; do

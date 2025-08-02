@@ -46,7 +46,9 @@ class PrefPPO(PPO):
             save_episode_data=self.save_episode_data,
             **self.pref_kwargs
         )
-        self.pref_ppo_callback.schedule.n_steps_first_train = self.unsuper_kwargs['n_steps_unsuper'] or None
+        if self.unsuper_enabled:
+            self.pref_ppo_callback.schedule.n_steps_first_train = self.unsuper_kwargs['n_steps_unsuper']
+
         self.unsupervised_callback = UnsupervisedCallback(**self.unsuper_kwargs) if self.unsuper_enabled else None
 
         self.callbacks = [
