@@ -193,6 +193,8 @@ class PrefPPOCallback(BasePrefCallback):
                 criterion = nn.MSELoss()
                 age_loss = criterion(pred_ages.squeeze(-1).mean(dim=-1), normalized_ages)
                 loss += self.recency_loss_weight * age_loss
+            else:
+                age_loss = None
 
             if self.recency_freeze_pref_heads:
                 member.unfreeze_pref()
@@ -200,13 +202,16 @@ class PrefPPOCallback(BasePrefCallback):
             loss.backward()
             optimizer.step()
 
-            metrics.append(self._compute_batch_metrics(pref_loss, correct, mask) | {'age_loss': age_loss.item()})
+            batch_metrics = self._compute_batch_metrics(pref_loss, correct, mask)
+            if age_loss is not None:
+                batch_metrics['age_loss'] = age_loss.item()
+            metrics.append(batch_metrics)
 
-        if not self.recency_loss_coupled:
+        if self.recency_loss_coupled:
             return metrics
 
         if self.recency_freeze_pref_heads:
-            self.reward_model.freeze_pref()
+            member.freeze_pref()
 
         ep_ages_dataset = self._get_episode_ages_dataset(self.num_samples_recency)
         ages_dataloader = DataLoader(ep_ages_dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
@@ -223,14 +228,14 @@ class PrefPPOCallback(BasePrefCallback):
             predictions = F.sigmoid(member.auxiliary(segments))
 
             criterion = nn.MSELoss()
-            losses = self.recency_loss_weight * criterion(predictions, normalized_ages)
+            losses = self.recency_loss_weight * criterion(predictions.squeeze(-1).mean(dim=-1), normalized_ages)
             losses.backward()
             optimizer.step()
 
             metrics.append({'age_loss': losses.mean().item()})
 
         if self.recency_freeze_pref_heads:
-            self.reward_model.unfreeze_pref()
+            member.unfreeze_pref()
 
         return metrics
 
