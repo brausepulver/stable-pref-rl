@@ -1,7 +1,7 @@
 from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Optional, Dict, Tuple
+from typing import Callable
 
 import einops
 from hydra.utils import to_absolute_path
@@ -24,7 +24,7 @@ class PrefPPOCallback(BasePrefCallback):
         train_acc_threshold_reward: float = 0.97,
         learning_rate_reward: float = 3e-4,
         batch_size_reward: int = 128,
-        reward_model_kwargs: dict = {},
+        reward_model_kwargs: dict | None = None,
         n_steps_eval_current: int | None = None,
         validate_on_train: bool = False,
         validate_on_current: bool = True,
@@ -37,7 +37,7 @@ class PrefPPOCallback(BasePrefCallback):
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
         reward_model_freeze_trunk: bool = False,
-        auxiliary_objectives: Dict[str, Tuple[float, Callable]] = {},
+        auxiliary_objectives: dict[str, tuple[float, Callable]] | None = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -45,7 +45,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.n_epochs_reward = n_epochs_reward
         self.train_acc_threshold_reward = train_acc_threshold_reward
         self.batch_size_reward = batch_size_reward
-        self.reward_model_kwargs = reward_model_kwargs
+        self.reward_model_kwargs = reward_model_kwargs or {}
         self.lr_reward = learning_rate_reward
         self.n_steps_eval_current = n_steps_eval_current or self.schedule.n_steps_reward
         self.validate_on_train = validate_on_train
@@ -57,7 +57,7 @@ class PrefPPOCallback(BasePrefCallback):
         self.log_validation_sampler_metrics = log_validation_sampler_metrics
         self.ensemble_agg_fn = ensemble_agg_fn
         self.reward_model_freeze_trunk = reward_model_freeze_trunk
-        self.auxiliary_objectives = auxiliary_objectives
+        self.auxiliary_objectives = auxiliary_objectives or {}
 
         self.reward_model_cls = {
             'reward_model': RewardModel,
@@ -105,7 +105,7 @@ class PrefPPOCallback(BasePrefCallback):
         return self.reward_model
 
 
-    def _compute_loss(self, pred_rewards: torch.Tensor, preferences: torch.Tensor, weight: Optional[torch.Tensor] = None):
+    def _compute_loss(self, pred_rewards: torch.Tensor, preferences: torch.Tensor, weight: torch.Tensor | None = None):
         pred_returns = einops.reduce(pred_rewards, '... batch pair segment 1 -> ... batch pair', 'sum')
         inputs = pred_returns[..., 1] - pred_returns[..., 0]
         criterion = nn.BCEWithLogitsLoss(weight=weight, reduction='none')

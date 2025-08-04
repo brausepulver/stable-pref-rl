@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import itertools
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
 from torch.utils.data import Dataset, ConcatDataset
@@ -29,8 +29,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         teacher_kwargs: dict = {},
         feed_buffer_size: int | None = None,
         synth_buffer_size: int | None = None,
-        synth_schedule: Optional[TrainingSchedule] = None,
-        synthesizer: Optional[BaseSynthesizer] = None,
+        synth_schedule: TrainingSchedule | None = None,
+        synthesizer: BaseSynthesizer | None = None,
         on_first_trained: Callable | None = None,
         on_trained: Callable | None = None,
         keep_all_eps: bool = False,

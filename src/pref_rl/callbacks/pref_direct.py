@@ -1,5 +1,3 @@
-from typing import Optional
-
 import einops
 import torch
 import torch.nn as nn
@@ -83,7 +81,7 @@ class PrefDIRECTCallback(BasePrefCallback):
         return steps
 
 
-    def _get_positive_samples(self, size: Optional[int] = None):
+    def _get_positive_samples(self, size: int | None = None):
         steps = self._get_steps_from_preferences(self.preference_buffer == 1)
         indices = torch.randperm(len(steps), device=self.device)[:size]
         return steps[indices]

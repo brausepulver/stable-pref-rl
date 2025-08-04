@@ -1,4 +1,4 @@
-from typing import Callable, Union, Optional
+from typing import Callable
 from abc import ABC, abstractmethod
 
 import einops
@@ -16,7 +16,7 @@ class NoValidEpisodesError(ValueError):
 
 class BaseSamplerMetric(ABC):
     @abstractmethod
-    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState]) -> dict[str, torch.Tensor]:
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState) -> dict[str, torch.Tensor]:
         pass
 
     @property
@@ -32,7 +32,7 @@ class BaseSamplerFilter(ABC):
         pass
 
     @abstractmethod
-    def compute(self, state_action_pairs: torch.Tensor, reward_model: Optional[nn.Module], schedule_state: Optional[BaseScheduleState]) -> torch.Tensor:
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState) -> torch.Tensor:
         pass
 
 
@@ -72,7 +72,7 @@ class EntropyMetric(BaseSamplerMetric):
 class CompositeMetric(BaseSamplerMetric):
     """Combines multiple metrics with weights."""
 
-    def __init__(self, metrics: dict[str, BaseSamplerMetric], weights: dict[str, Union[float, Callable]] = {}, name: str = "composite"):
+    def __init__(self, metrics: dict[str, BaseSamplerMetric], weights: dict[str, float | Callable] = {}, name: str = "composite"):
         self.metrics = metrics
         self._name = name
 
@@ -111,17 +111,17 @@ class Sampler:
         segment_size: int,
         observation_size: int,
         action_size: int,
-        sampling_metric: Optional[BaseSamplerMetric] = None,
+        sampling_metric: BaseSamplerMetric | None = None,
         pre_sample_multiplier: int = 10,
-        logging_metrics: Optional[list[BaseSamplerMetric]] = {},
-        filters: Optional[list[BaseSamplerFilter]] = None
+        logging_metrics: list[BaseSamplerMetric] | None = None,
+        filters: list[BaseSamplerFilter] | None = None
     ):
         self.segment_size = segment_size
         self.observation_size = observation_size
         self.action_size = action_size
         self.pre_sample_multiplier = pre_sample_multiplier
         self.sampling_metric = sampling_metric
-        self.logging_metrics = logging_metrics
+        self.logging_metrics = logging_metrics or {}
         self.filters = filters or []
 
 
@@ -179,7 +179,7 @@ class Sampler:
         return state_actions, gt_rewards, segment_metas
 
 
-    def compute_logging_metrics(self, metrics: dict[str, torch.Tensor], state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState] = None):
+    def compute_logging_metrics(self, metrics: dict[str, torch.Tensor], state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState | None = None):
         for metric in self.logging_metrics:
             if metric.name not in metrics:
                 metrics |= metric.compute(state_action_pairs, reward_model, schedule_state)
@@ -187,7 +187,7 @@ class Sampler:
         return metrics
 
 
-    def _apply_filters(self, state_action_pairs: torch.Tensor, reward_model: Optional[nn.Module], schedule_state: Optional[BaseScheduleState]) -> torch.Tensor:
+    def _apply_filters(self, state_action_pairs: torch.Tensor, reward_model: nn.Module | None, schedule_state: BaseScheduleState | None) -> torch.Tensor:
         device = state_action_pairs.device
         keep_mask = torch.ones(state_action_pairs.shape[0], dtype=torch.bool, device=device)
         for flt in self.filters:
@@ -198,7 +198,16 @@ class Sampler:
         return kept_indices
 
 
-    def sample_pairs(self, episodes: list, episode_metas: list, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, schedule_state: Optional[BaseScheduleState] = None, log_metrics: bool = True):
+    def sample_pairs(
+        self,
+        episodes: list,
+        episode_metas: list,
+        num_samples: int,
+        stratified: bool = False,
+        reward_model: Callable | None = None,
+        schedule_state: BaseScheduleState | None = None,
+        log_metrics: bool = True
+    ):
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples

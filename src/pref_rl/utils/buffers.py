@@ -1,12 +1,12 @@
 from collections import deque, defaultdict
-from typing import List, Tuple, Dict, Any, Optional
+from typing import Any
 
 import numpy as np
 import torch
 
 from .data import SegmentDataset
 
-EpisodeData = Tuple[List[torch.Tensor], Dict[str, List[Any]]]
+EpisodeData = tuple[list[torch.Tensor], dict[str, list[Any]]]
 
 
 class EpisodeBuffer:
@@ -15,10 +15,10 @@ class EpisodeBuffer:
         self.keep_all_eps = keep_all_eps
         self.store_step_timesteps = store_step_timesteps
         self.done_eps: deque[EpisodeData] = deque(maxlen=self.n_episodes if not self.keep_all_eps else None)
-        self.running_eps: List[EpisodeData] = [([], defaultdict(list)) for _ in range(n_envs)]
+        self.running_eps: list[EpisodeData] = [([], defaultdict(list)) for _ in range(n_envs)]
 
 
-    def add(self, value: torch.Tensor, done: np.ndarray, meta: dict[str, Any] = {}, timesteps: Optional[int] = None):
+    def add(self, value: torch.Tensor, done: np.ndarray, meta: dict[str, Any] = {}, timesteps: int | None = None):
         for env_idx, env_value in enumerate(value):
             ep_steps, ep_meta = self.running_eps[env_idx]
             ep_steps.append(env_value)

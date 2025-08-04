@@ -1,11 +1,10 @@
-from typing import Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
 
 
 class Teacher:
-    def __init__(self, segment_size: int, observation_size: int, action_size: int, teacher: Optional[str] = None, teacher_kwargs: Optional[dict] = None):
+    def __init__(self, segment_size: int, observation_size: int, action_size: int, teacher: str | None = None, teacher_kwargs: dict | None = None):
         teacher_kwargs = teacher_kwargs or {}
         self.segment_size = segment_size
         self.observation_size = observation_size

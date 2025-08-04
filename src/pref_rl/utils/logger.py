@@ -1,4 +1,5 @@
-from typing import Any, Dict, Optional
+from typing import Any
+
 from stable_baselines3.common.logger import Logger
 from stable_baselines3.common import utils
 
@@ -8,7 +9,7 @@ class PrefLogger(Logger):
     Logger that extends SB3's Logger with wandb integration and progress tracking.
     """
     
-    def __init__(self, folder: Optional[str], output_formats, wandb_run=None):
+    def __init__(self, folder: str | None, output_formats, wandb_run=None):
         super().__init__(folder, output_formats)
         self.wandb_run = wandb_run
 
@@ -21,7 +22,7 @@ class PrefLogger(Logger):
         except ImportError:
             pass
     
-    def record_with_progress(self, metrics: Dict[str, Any], num_feed: int, training_progress: float, prefix: str = ""):
+    def record_with_progress(self, metrics: dict[str, Any], num_feed: int, training_progress: float, prefix: str = ""):
         """
         Record metrics to both standard logger and wandb with progress context.
         
@@ -48,7 +49,7 @@ class PrefLogger(Logger):
 
 def create_pref_logger(
     verbose: int = 0,
-    tensorboard_log: Optional[str] = None,
+    tensorboard_log: str | None = None,
     tb_log_name: str = "run",
     reset_num_timesteps: bool = True,
     wandb_run=None

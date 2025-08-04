@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Tuple
+from typing import Callable
 
 from .schedules import BaseSchedule, ConstantSchedule, PrefScheduleState, BaseScheduleState
 
 
 class TrainingSchedule(BaseSchedule, ABC):
     @abstractmethod
-    def __call__(self, progress_remaining: float, state: Optional[BaseScheduleState] = None) -> Tuple[bool, int]:
+    def __call__(self, progress_remaining: float, state: BaseScheduleState | None = None) -> tuple[bool, int]:
         pass
 
 
@@ -19,11 +19,11 @@ class BasePrefSchedule(TrainingSchedule):
 
     def __init__(self,
                  n_steps_reward: int = 32_000,
-                 max_feed: Optional[int] = 2_000,
-                 feed_batch_size: Optional[int] = None,
-                 batch_size_schedule: Optional[Callable] = None,
-                 n_steps_first_train: Optional[int] = None,
-                 n_steps_last_train: Optional[int] = None,
+                 max_feed: int | None = 2_000,
+                 feed_batch_size: int | None = None,
+                 batch_size_schedule: Callable | None = None,
+                 n_steps_first_train: int | None = None,
+                 n_steps_last_train: int | None = None,
                  keep_training: bool = False):
         """
         :param n_steps_reward: Steps between reward model training
@@ -57,7 +57,7 @@ class BasePrefSchedule(TrainingSchedule):
         return should_train and not should_stop_training
 
 
-    def __call__(self, progress_remaining: float, state: Optional[PrefScheduleState] = None) -> int:
+    def __call__(self, progress_remaining: float, state: PrefScheduleState | None = None) -> int:
         """
         Return the number of feedback pairs to collect at this step.
         

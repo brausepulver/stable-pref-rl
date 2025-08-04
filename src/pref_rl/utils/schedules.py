@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Any
 
 import torch.nn as nn
 
@@ -30,7 +30,7 @@ class PrefPPOScheduleState(PrefScheduleState):
 
 class BaseSchedule(ABC):
     @abstractmethod
-    def __call__(self, progress_remaining: float, state: Optional[BaseScheduleState] = None) -> Any:
+    def __call__(self, progress_remaining: float, state: BaseScheduleState | None = None) -> Any:
         pass
 
 

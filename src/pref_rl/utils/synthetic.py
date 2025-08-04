@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Union, Callable
+from typing import Callable
 
 import torch
 
@@ -49,9 +49,9 @@ class TemporalSynthesizer(BaseSynthesizer):
         segment_size: int,
         observation_size: int,
         action_size: int,
-        neg_eps_until_steps: Union[int, Callable],
-        pos_eps_after_eq_steps: Optional[Union[int, Callable]] = None,
-        loss_weight: Union[float, Callable] = 0.5,
+        neg_eps_until_steps: int | Callable,
+        pos_eps_after_eq_steps: int | Callable | None = None,
+        loss_weight: float | Callable = 0.5,
     ):
         self.segment_size = segment_size
         self.observation_size = observation_size
@@ -138,7 +138,7 @@ class FeedbackResamplingSynthesizer(BaseSynthesizer):
 
     def __init__(
         self,
-        weight_schedule: Optional[Callable] = None,  # for loss weights, not sampling weights
+        weight_schedule: Callable | None = None,  # for loss weights, not sampling weights
         alpha: float = 1.0,  # exponential rate over ranks
     ):
         self.weight_schedule = (
