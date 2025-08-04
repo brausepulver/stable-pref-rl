@@ -25,6 +25,17 @@ class BaseSamplerMetric(ABC):
         pass
 
 
+class BaseSamplerFilter(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        pass
+
+    @abstractmethod
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: Optional[nn.Module], schedule_state: Optional[BaseScheduleState]) -> torch.Tensor:
+        pass
+
+
 class DisagreementMetric(BaseSamplerMetric):
     @property
     def name(self) -> str:
@@ -39,7 +50,6 @@ class DisagreementMetric(BaseSamplerMetric):
         probabilities = F.softmax(member_returns, dim=-1)
         values = probabilities[..., 0].std(dim=0)
         return {self.name: values}
-
 
 
 class EntropyMetric(BaseSamplerMetric):
@@ -65,7 +75,7 @@ class CompositeMetric(BaseSamplerMetric):
     def __init__(self, metrics: dict[str, BaseSamplerMetric], weights: dict[str, Union[float, Callable]] = {}, name: str = "composite"):
         self.metrics = metrics
         self._name = name
-        
+
         self.weights = {}
         for metric_name in metrics.keys():
             weight = weights.get(metric_name, 1.0)
@@ -96,13 +106,23 @@ class CompositeMetric(BaseSamplerMetric):
 
 
 class Sampler:
-    def __init__(self, segment_size: int, observation_size: int, action_size: int, sampling_metric: Optional[BaseSamplerMetric] = None, pre_sample_multiplier: int = 10, logging_metrics: Optional[list[BaseSamplerMetric]] = {}):
+    def __init__(
+        self,
+        segment_size: int,
+        observation_size: int,
+        action_size: int,
+        sampling_metric: Optional[BaseSamplerMetric] = None,
+        pre_sample_multiplier: int = 10,
+        logging_metrics: Optional[list[BaseSamplerMetric]] = {},
+        filters: Optional[list[BaseSamplerFilter]] = None
+    ):
         self.segment_size = segment_size
         self.observation_size = observation_size
         self.action_size = action_size
         self.pre_sample_multiplier = pre_sample_multiplier
         self.sampling_metric = sampling_metric
         self.logging_metrics = logging_metrics
+        self.filters = filters or []
 
 
     def _get_episode_indices(self, valid_episodes: list, num_samples: int, stratified: bool = False):
@@ -115,7 +135,7 @@ class Sampler:
             ep_indices = ep_indices[torch.randperm(len(ep_indices))]
         else:
             ep_indices = torch.randint(0, len(valid_episodes), (num_samples,))
-        
+
         return ep_indices
 
 
@@ -153,7 +173,7 @@ class Sampler:
 
         ep_indices = self._get_episode_indices(valid_episodes, num_samples, stratified)
         segments, segment_metas = self._get_segments(valid_episodes, valid_episode_metas, ep_indices)
-        
+
         obs, act, gt_rewards = torch.split(segments, [self.observation_size, self.action_size, 1], dim=-1)
         state_actions = torch.cat([obs, act], dim=-1)
         return state_actions, gt_rewards, segment_metas
@@ -163,8 +183,19 @@ class Sampler:
         for metric in self.logging_metrics:
             if metric.name not in metrics:
                 metrics |= metric.compute(state_action_pairs, reward_model, schedule_state)
-        
+
         return metrics
+
+
+    def _apply_filters(self, state_action_pairs: torch.Tensor, reward_model: Optional[nn.Module], schedule_state: Optional[BaseScheduleState]) -> torch.Tensor:
+        device = state_action_pairs.device
+        keep_mask = torch.ones(state_action_pairs.shape[0], dtype=torch.bool, device=device)
+        for flt in self.filters:
+            mask = flt.compute(state_action_pairs, reward_model, schedule_state)
+            keep_mask &= mask
+
+        kept_indices = torch.nonzero(keep_mask, as_tuple=False).squeeze(-1)
+        return kept_indices
 
 
     def sample_pairs(self, episodes: list, episode_metas: list, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, schedule_state: Optional[BaseScheduleState] = None, log_metrics: bool = True):
@@ -180,6 +211,11 @@ class Sampler:
         for i in range(0, len(segment_metas), 2):
             segment_meta_pairs.append([segment_metas[i], segment_metas[i + 1]])
 
+        keep_indices = self._apply_filters(state_action_pairs, reward_model, schedule_state)
+        state_action_pairs = state_action_pairs[keep_indices]
+        reward_pairs = reward_pairs[:, keep_indices]
+        segment_meta_pairs = [segment_meta_pairs[i] for i in keep_indices.tolist()]
+
         metrics = {}
         if method != 'uniform':
             assert self.sampling_metric
@@ -188,7 +224,7 @@ class Sampler:
         if log_metrics:
             metrics = self.compute_logging_metrics(metrics, state_action_pairs, reward_model, schedule_state)
 
-        if method == 'uniform':
+        if method == 'uniform' or state_action_pairs.shape[0] <= num_samples:
             return state_action_pairs, reward_pairs, metrics, segment_meta_pairs
 
         idx = torch.topk(metrics[self.sampling_metric.name], num_samples).indices.to('cpu')
