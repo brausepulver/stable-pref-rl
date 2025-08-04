@@ -90,13 +90,9 @@ class CompositeMetric(BaseSamplerMetric):
         return weighted_value
 
     def compute(self, state_action_pairs, reward_model, schedule_state):
-        computed_metrics = self._compute_metrics(state_action_pairs, reward_model, schedule_state)
-        named_metrics = computed_metrics
-        
-        # Add the composite metric itself
-        named_metrics[self.name] = self._aggregate_metrics(computed_metrics, schedule_state)
-        
-        return named_metrics
+        metrics = self._compute_metrics(state_action_pairs, reward_model, schedule_state)
+        metrics[self.name] = self._aggregate_metrics(metrics, schedule_state)  # Add the composite metric itself
+        return metrics
 
 
 class Sampler:
@@ -123,11 +119,13 @@ class Sampler:
         return ep_indices
 
 
-    def _get_segments(self, episodes: list, ep_indices: torch.Tensor):
+    def _get_segments(self, episodes: list, episode_metas: list, ep_indices: torch.Tensor):
         segments = []
+        segment_metas = []
 
         for ep_idx in ep_indices:
             ep = episodes[ep_idx]
+            ep_meta = episode_metas[ep_idx]
 
             start_step = 0 if len(ep) == self.segment_size else np.random.randint(0, len(ep) - self.segment_size)
             offsets = torch.arange(0, self.segment_size)
@@ -136,20 +134,29 @@ class Sampler:
             segment = ep[step_indices]
             segments.append(segment)
 
-        return torch.stack(segments)
+            segment_meta = {}
+            for key, values in ep_meta.items():
+                try:
+                    segment_meta[key] = values[start_step:start_step + self.segment_size]
+                except TypeError:
+                    segment_meta[key] = values
+            segment_metas.append(segment_meta)
+
+        return torch.stack(segments), segment_metas
 
 
-    def sample_segments(self, episodes: list, num_samples: int, stratified: bool = False):
+    def sample_segments(self, episodes: list, episode_metas: list, num_samples: int, stratified: bool = False):
         valid_episodes = [ep for ep in episodes if len(ep) >= self.segment_size]
+        valid_episode_metas = [episode_metas[i] for i, ep in enumerate(episodes) if len(ep) >= self.segment_size]
         if len(valid_episodes) == 0:
             raise NoValidEpisodesError('No valid episodes to sample from')
 
         ep_indices = self._get_episode_indices(valid_episodes, num_samples, stratified)
-        segments = self._get_segments(valid_episodes, ep_indices)
+        segments, segment_metas = self._get_segments(valid_episodes, valid_episode_metas, ep_indices)
         
         obs, act, gt_rewards = torch.split(segments, [self.observation_size, self.action_size, 1], dim=-1)
         state_actions = torch.cat([obs, act], dim=-1)
-        return ep_indices, state_actions, gt_rewards
+        return state_actions, gt_rewards, segment_metas
 
 
     def compute_logging_metrics(self, metrics: dict[str, torch.Tensor], state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: Optional[BaseScheduleState] = None):
@@ -160,16 +167,18 @@ class Sampler:
         return metrics
 
 
-    def sample_pairs(self, episodes: list, episode_ages: torch.Tensor, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, schedule_state: Optional[BaseScheduleState] = None, log_metrics: bool = True):
+    def sample_pairs(self, episodes: list, episode_metas: list, num_samples: int, stratified: bool = False, reward_model: Optional[Callable] = None, schedule_state: Optional[BaseScheduleState] = None, log_metrics: bool = True):
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
         num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
         num_segments = 2 * num_samples_expanded
-        ep_indices, state_actions, gt_rewards = self.sample_segments(episodes, num_segments, stratified)
+        state_actions, gt_rewards, segment_metas = self.sample_segments(episodes, episode_metas, num_segments, stratified)
 
         state_action_pairs = einops.rearrange(state_actions, '(n p) s d -> n p s d', p=2)
         reward_pairs = einops.rearrange(gt_rewards, '(n p) s 1 -> p n s', p=2)
-        segment_ages = einops.rearrange(episode_ages[ep_indices], '(n p) -> n p', p=2)
+        segment_meta_pairs = []
+        for i in range(0, len(segment_metas), 2):
+            segment_meta_pairs.append([segment_metas[i], segment_metas[i + 1]])
 
         metrics = {}
         if method != 'uniform':
@@ -180,7 +189,8 @@ class Sampler:
             metrics = self.compute_logging_metrics(metrics, state_action_pairs, reward_model, schedule_state)
 
         if method == 'uniform':
-            return state_action_pairs, reward_pairs, metrics, segment_ages
+            return state_action_pairs, reward_pairs, metrics, segment_meta_pairs
 
         idx = torch.topk(metrics[self.sampling_metric.name], num_samples).indices.to('cpu')
-        return state_action_pairs[idx], reward_pairs[:, idx], metrics, segment_ages
+        selected_segment_meta_pairs = [segment_meta_pairs[i] for i in idx]
+        return state_action_pairs[idx], reward_pairs[:, idx], metrics, selected_segment_meta_pairs

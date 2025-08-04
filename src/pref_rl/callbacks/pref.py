@@ -136,28 +136,30 @@ class BasePrefCallback(RewardModifierCallback, ABC):
         num_specific = num_samples - num_uniform
 
         schedule_state = self._create_schedule_state()
-        state_actions, rewards, metrics, segment_ages = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model, schedule_state=schedule_state, log_metrics=self.log_sampler_metrics)
+        state_actions, rewards, metrics, segment_metas = sampler.sample_pairs(episodes, episode_ages, num_specific, reward_model=reward_model, schedule_state=schedule_state, log_metrics=self.log_sampler_metrics)
 
         if num_uniform > 0:
-            state_actions_uniform, rewards_uniform, _, __ = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model, schedule_state=schedule_state, log_metrics=False)
+            state_actions_uniform, rewards_uniform, _, segment_metas_uniform = sampler.sample_pairs(episodes, episode_ages, num_uniform, reward_model=reward_model, schedule_state=schedule_state, log_metrics=False)
             state_actions = torch.cat([state_actions, state_actions_uniform], dim=0)
             rewards = torch.cat([rewards, rewards_uniform], dim=1)
+            segment_metas.extend(segment_metas_uniform)
 
-        return state_actions, rewards, metrics, segment_ages
+        return state_actions, rewards, metrics, segment_metas
 
 
     def _expand_real_data(self, sampler: Sampler, num_samples: int):
         episodes = self.buffer.get_episodes()
-        episode_ages = self.buffer.get_episode_ages()
+        episode_metas = self.buffer.get_episode_metas()
         reward_model = self._get_predictor()
-        state_actions, rewards, sampler_metrics, segment_ages = self._sample_segments(sampler, episodes, episode_ages, num_samples, reward_model)
+        state_actions, rewards, sampler_metrics, segment_metas = self._sample_segments(sampler, episodes, episode_metas, num_samples, reward_model)
 
         if self.log_sampler_metrics and sampler_metrics:
             self._log_metrics_stats(sampler_metrics, prefix='sampler/')
 
         preferences, keep_indices = self.train_teacher.query_segments(rewards.detach())
         weights = torch.ones_like(preferences[keep_indices])
-        num_added = self.feed_buffer.add(state_actions[keep_indices], preferences[keep_indices], weights, segment_ages[keep_indices])
+        selected_segment_metas = [segment_metas[idx] for idx in keep_indices]
+        num_added = self.feed_buffer.add(state_actions[keep_indices], preferences[keep_indices], weights, selected_segment_metas)
 
         if self.num_feed == self.schedule.max_feed:
             self.n_steps_train_end = self.num_timesteps
@@ -174,10 +176,10 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _expand_synth_data(self, num_samples: int):
-        episodes = self.buffer.get_episodes(full=True)
-        episode_ages = self.buffer.get_episode_ages(full=True)
+        episodes = self.buffer.get_episodes(return_all=True)
+        episode_metas = self.buffer.get_episode_metas(return_all=True)
         schedule_state = self._create_schedule_state()
-        segments, preferences, metrics, weights = self.synthesizer.generate_pairs(episodes, episode_ages, num_samples, schedule_state)
+        segments, preferences, metrics, weights = self.synthesizer.generate_pairs(episodes, episode_metas, num_samples, schedule_state)
         self._log_metrics_stats(metrics, prefix='synth/')
 
         num_added = self.synth_buffer.add(segments, preferences, weights)
@@ -207,7 +209,8 @@ class BasePrefCallback(RewardModifierCallback, ABC):
     def _add_steps_to_buffer(self):
         obs, act, gt_rewards = self._get_current_step()
         annotations = torch.cat([obs, act, gt_rewards], dim=-1)
-        self.buffer.add(annotations, self.locals['dones'], self.num_timesteps)
+        meta = {}
+        self.buffer.add(annotations, self.locals['dones'], meta=meta, timesteps=self.num_timesteps)
 
 
     def _on_episode_done(self):

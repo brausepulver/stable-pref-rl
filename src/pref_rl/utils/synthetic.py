@@ -84,9 +84,11 @@ class TemporalSynthesizer(BaseSynthesizer):
         }
 
 
-    def generate_pairs(self, episodes: list, episode_ages: torch.Tensor, num_samples: int, state: BaseScheduleState):
+    def generate_pairs(self, episodes: list, episode_metas: list, num_samples: int, state: BaseScheduleState):
         if not episodes:
             raise ValueError("Episodes must not be empty to generate synthetic pairs")
+
+        episode_ages = torch.tensor([ep_meta['ep_start_timesteps'] for ep_meta in episode_metas])
 
         prev_mask = episode_ages < (state.num_timesteps - self.neg_eps_until_steps(state.progress_remaining, state))
         cur_mask = episode_ages >= (state.num_timesteps - self.pos_eps_after_eq_steps(state.progress_remaining, state))
@@ -106,7 +108,6 @@ class TemporalSynthesizer(BaseSynthesizer):
 
         loss_weights = self._calculate_loss_weights(num_samples, state)
 
-        # Map local indices back to filtered arrays for ages
         prev_ages = episode_ages[prev_mask][prev_ep_indices]
         cur_ages = episode_ages[cur_mask][cur_ep_indices]
         metrics = self._calculate_metrics(prev_ages, cur_ages)
@@ -224,7 +225,7 @@ class FeedbackResamplingSynthesizer(BaseSynthesizer):
         }
 
 
-    def generate_pairs(self, episodes: list, episode_ages: torch.Tensor, num_samples: int, state: BaseScheduleState):
+    def generate_pairs(self, episodes: list, episode_metas: list, num_samples: int, state: BaseScheduleState):
         fb = state.feed_buffer
         if fb is None or len(fb) == 0:
             raise ValueError("FeedbackResamplingSynthesizer requires a non-empty FeedbackBuffer")

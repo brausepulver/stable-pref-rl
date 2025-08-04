@@ -10,6 +10,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, Dataset
 
 from .pref import BasePrefCallback
+from ..utils.data import segment_collate_fn
 from ..utils.reward_models import RewardModel
 from ..utils.sampler import NoValidEpisodesError
 from ..utils.schedules import PrefPPOScheduleState
@@ -141,10 +142,10 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset):
-        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda')
+        dataloader = DataLoader(dataset, batch_size=self.batch_size_reward, shuffle=True, pin_memory=self.device.type == 'cuda', collate_fn=segment_collate_fn)
         metrics = []
 
-        for segments, preferences, weights, _, mask in dataloader:
+        for segments, preferences, weights, segment_metas, mask in dataloader:
             optimizer.zero_grad()
 
             pred_rewards = member(segments)
@@ -215,9 +216,9 @@ class PrefPPOCallback(BasePrefCallback):
         return metrics
 
 
-    def _validate_on_episodes(self, episodes, episode_ages, size: int, compute_sampler_metrics: bool = True):
+    def _validate_on_episodes(self, episodes, episode_metas, size: int, compute_sampler_metrics: bool = True):
         schedule_state = self._create_schedule_state()
-        segments, rewards, logging_metrics, _ = self.uniform_sampler.sample_pairs(episodes, episode_ages, size, reward_model=self.reward_model, schedule_state=schedule_state, log_metrics=self.log_validation_sampler_metrics)
+        segments, rewards, logging_metrics, _ = self.uniform_sampler.sample_pairs(episodes, episode_metas, size, reward_model=self.reward_model, schedule_state=schedule_state, log_metrics=self.log_validation_sampler_metrics)
 
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
 
@@ -240,16 +241,16 @@ class PrefPPOCallback(BasePrefCallback):
 
 
     def _validate_train(self):
-        metrics = self._validate_on_episodes(self.buffer.get_episodes(), self.buffer.get_episode_ages(), len(self.feed_buffer), self.log_train_sampler_metrics)
+        metrics = self._validate_on_episodes(self.buffer.get_episodes(), self.buffer.get_episode_metas(), len(self.feed_buffer), self.log_train_sampler_metrics)
         self._log_validation_metrics(metrics)
 
 
     def _validate_current(self):
         episodes = self.buffer.get_episodes()[-self.done_eps_since_eval:]
-        episode_ages = self.buffer.get_episode_ages()[-self.done_eps_since_eval:]
+        episode_metas = self.buffer.get_episode_metas()[-self.done_eps_since_eval:]
         self.done_eps_since_eval = 0
         try:
-            metrics = self._validate_on_episodes(episodes, episode_ages, int(0.5 * sum(len(ep) for ep in episodes) / self.segment_size), self.log_current_sampler_metrics)
+            metrics = self._validate_on_episodes(episodes, episode_metas, int(0.5 * sum(len(ep) for ep in episodes) / self.segment_size), self.log_current_sampler_metrics)
             self._log_validation_metrics(metrics, prefix='current/')
         except NoValidEpisodesError:
             return
