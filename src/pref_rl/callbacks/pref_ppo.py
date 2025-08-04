@@ -1,6 +1,7 @@
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Dict, Tuple
 
 import einops
 from hydra.utils import to_absolute_path
@@ -11,7 +12,7 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 
 from .pref import BasePrefCallback
 from ..utils.data import segment_collate_fn
-from ..utils.reward_models import RewardModel
+from ..utils.reward_models import MultiHeadMember, MultiHeadRewardModel, RewardModel
 from ..utils.sampler import NoValidEpisodesError
 from ..utils.schedules import PrefPPOScheduleState
 from ..utils.teacher import Teacher
@@ -35,6 +36,8 @@ class PrefPPOCallback(BasePrefCallback):
         log_validation_sampler_metrics: bool = True,
         ensemble_agg_fn: Callable = lambda pred: pred.mean(dim=0),
         reward_model_kind: str = 'reward_model',
+        reward_model_freeze_trunk: bool = False,
+        auxiliary_objectives: Dict[str, Tuple[float, Callable]] = {},
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -53,9 +56,12 @@ class PrefPPOCallback(BasePrefCallback):
         self.log_held_out_sampler_metrics = log_held_out_sampler_metrics
         self.log_validation_sampler_metrics = log_validation_sampler_metrics
         self.ensemble_agg_fn = ensemble_agg_fn
+        self.reward_model_freeze_trunk = reward_model_freeze_trunk
+        self.auxiliary_objectives = auxiliary_objectives
 
         self.reward_model_cls = {
             'reward_model': RewardModel,
+            'multi_head_reward_model': MultiHeadRewardModel
         }[reward_model_kind]
 
         self.held_out_data_path = (
@@ -111,34 +117,47 @@ class PrefPPOCallback(BasePrefCallback):
         return losses, correct
 
 
-    def _compute_batch_metrics(self, losses: torch.Tensor, correct: torch.Tensor, mask: torch.Tensor):
+    def _compute_batch_metrics(self, loss: torch.Tensor, correct: torch.Tensor, mask: torch.Tensor):
         real_mask = mask == 0
         synth_mask = mask == 1
         
         metrics = {
-            'loss': losses.mean().item(),
+            'loss': loss.mean().item(),
             'accuracy': correct.mean(dtype=torch.float).item(),
         }
 
         if real_mask.any():
             metrics.update({
-                'real_loss': losses[real_mask].mean().item(),
+                'real_loss': loss[real_mask].mean().item(),
                 'real_acc': correct[real_mask].mean(dtype=torch.float).item(),
             })
 
         if correct.any():
-            metrics['loss_correct'] = losses[correct].mean().item()
+            metrics['loss_correct'] = loss[correct].mean().item()
         
         if (~correct).any():
-            metrics['loss_incorrect'] = losses[~correct].mean().item()
+            metrics['loss_incorrect'] = loss[~correct].mean().item()
 
         if synth_mask.any():
             metrics.update({
-                'synth_loss': losses[synth_mask].mean().item(),
+                'synth_loss': loss[synth_mask].mean().item(),
                 'synth_acc': correct[synth_mask].mean(dtype=torch.float).item(),
             })
 
         return metrics
+
+
+    @contextmanager
+    def _maybe_freeze_trunk(self, member: nn.Module):
+        try:
+            if self.reward_model_freeze_trunk:
+                assert isinstance(member, MultiHeadMember)
+                member.freeze_pref()
+            yield
+        finally:
+            if self.reward_model_freeze_trunk:
+                assert isinstance(member, MultiHeadMember)
+                member.unfreeze_pref()
 
 
     def _train_member_epoch(self, member: nn.Module, optimizer, dataset: Dataset):
@@ -149,12 +168,21 @@ class PrefPPOCallback(BasePrefCallback):
             optimizer.zero_grad()
 
             pred_rewards = member(segments)
-            losses, correct = self._compute_loss(pred_rewards, preferences, weights)
+            pref_loss, correct = self._compute_loss(pred_rewards, preferences, weights)
 
-            losses.sum().backward()
+            loss = pref_loss.sum()
+            batch_metrics = self._compute_batch_metrics(pref_loss, correct, mask)
+
+            with self._maybe_freeze_trunk(member):
+                for weight, objective_fn in self.auxiliary_objectives.values():
+                    aux_loss, aux_metrics = objective_fn(segments, preferences, weights, segment_metas, mask)
+                    loss += weight * aux_loss
+                    batch_metrics |= aux_metrics
+
+            loss.backward()
             optimizer.step()
 
-            metrics.append(self._compute_batch_metrics(losses, correct, mask))
+            metrics.append(batch_metrics)
 
         return metrics
 
