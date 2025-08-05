@@ -19,7 +19,7 @@ for drop_fraction in 0.2 0.05; do
             "${BASE_PARAMS[@]}" \
             "training.seed=${seed}" \
             "preset.method.pref.sampler=disagreement" \
-            "+preset.method.pref.sampler_kwargs.filters=[{_target_: pref_rl.utils.sampler.SegmentProbQuantileFilter, drop_fraction: 0.2}]" \
+            "+preset.method.pref.sampler_kwargs.filters=[{_target_: pref_rl.utils.sampler.SegmentProbQuantileFilter, drop_fraction: ${drop_fraction}}]" \
             "logging.tags=[pref_ppo, experiment, disagreement, policy_filtering]" \
             "logging.group=pref_ppo/policy_filtering/disagreement/${drop_fraction}"
     done
