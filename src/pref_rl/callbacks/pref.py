@@ -207,9 +207,9 @@ class BasePrefCallback(RewardModifierCallback, ABC):
 
 
     def _add_steps_to_buffer(self):
-        obs, act, gt_rewards = self._get_current_step()
+        obs, act, gt_rewards, log_probs = self._get_current_step()
         annotations = torch.cat([obs, act, gt_rewards], dim=-1)
-        meta = {}
+        meta = {'log_probs': log_probs}
         self.buffer.add(annotations, self.locals['dones'], meta=meta, timesteps=self.num_timesteps)
 
 

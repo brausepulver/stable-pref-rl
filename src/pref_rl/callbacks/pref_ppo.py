@@ -246,7 +246,15 @@ class PrefPPOCallback(BasePrefCallback):
 
     def _validate_on_episodes(self, episodes, episode_metas, size: int, compute_sampler_metrics: bool = True):
         schedule_state = self._create_schedule_state()
-        segments, rewards, logging_metrics, _ = self.uniform_sampler.sample_pairs(episodes, episode_metas, size, reward_model=self.reward_model, schedule_state=schedule_state, log_metrics=self.log_validation_sampler_metrics)
+        segments, rewards, logging_metrics, _ = self.uniform_sampler.sample_pairs(
+            episodes,
+            episode_metas,
+            size,
+            reward_model=self.reward_model,
+            schedule_state=schedule_state, 
+            log_metrics=self.log_validation_sampler_metrics,
+            apply_filters=False
+        )
 
         preferences, keep_indices = self.eval_teacher.query_segments(rewards)
 
@@ -310,7 +318,7 @@ class PrefPPOCallback(BasePrefCallback):
     def _predict_rewards(self):
         self.reward_model.eval()
 
-        obs, act, _ = self._get_current_step()
+        obs, act, _, __ = self._get_current_step()
         state_actions = torch.cat([obs, act], dim=-1).to(self.device)
 
         with torch.no_grad():

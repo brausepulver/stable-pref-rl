@@ -3,6 +3,7 @@ echo "TORCH_NUM_THREADS=1" >> /etc/environment
 cd /opt/workspace
 
 git clone https://token:$GITHUB_TOKEN@github.com/brausepulver/pref_rl.git .
+git checkout exp/policy-filtering
 
 snap install --classic aws-cli
 aws sts get-caller-identity  # Verify AWS CLI installation

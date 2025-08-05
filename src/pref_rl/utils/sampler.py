@@ -16,7 +16,7 @@ class NoValidEpisodesError(ValueError):
 
 class BaseSamplerMetric(ABC):
     @abstractmethod
-    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState) -> dict[str, torch.Tensor]:
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState, segment_meta_pairs: list[dict] | None = None) -> dict[str, torch.Tensor]:
         pass
 
     @property
@@ -32,7 +32,7 @@ class BaseSamplerFilter(ABC):
         pass
 
     @abstractmethod
-    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState) -> torch.Tensor:
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState, segment_meta_pairs: list[dict] | None = None) -> torch.Tensor:
         pass
 
 
@@ -41,7 +41,7 @@ class DisagreementMetric(BaseSamplerMetric):
     def name(self) -> str:
         return 'disagreement'
 
-    def compute(self, state_action_pairs, reward_model, schedule_state):
+    def compute(self, state_action_pairs, reward_model, schedule_state, segment_meta_pairs=None):
         with torch.no_grad():
             device = next(reward_model.parameters()).device
             member_rewards = reward_model(state_action_pairs.to(device))
@@ -57,7 +57,7 @@ class EntropyMetric(BaseSamplerMetric):
     def name(self) -> str:
         return 'entropy'
 
-    def compute(self, state_action_pairs, reward_model, schedule_state):
+    def compute(self, state_action_pairs, reward_model, schedule_state, segment_meta_pairs=None):
         with torch.no_grad():
             device = next(reward_model.parameters()).device
             member_rewards = reward_model(state_action_pairs.to(device))
@@ -85,10 +85,10 @@ class CompositeMetric(BaseSamplerMetric):
     def name(self) -> str:
         return self._name
 
-    def _compute_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState):
+    def _compute_metrics(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState, segment_meta_pairs=None):
         metrics = {}
         for metric in self.metrics.values():
-            metrics |= metric.compute(state_action_pairs, reward_model, schedule_state)
+            metrics |= metric.compute(state_action_pairs, reward_model, schedule_state, segment_meta_pairs)
         return metrics
 
     def _aggregate_metrics(self, computed_metrics: dict[str, torch.Tensor], schedule_state: BaseScheduleState):
@@ -99,10 +99,39 @@ class CompositeMetric(BaseSamplerMetric):
         weighted_value = torch.stack(weighted_values).sum(dim=0)
         return weighted_value
 
-    def compute(self, state_action_pairs, reward_model, schedule_state):
-        metrics = self._compute_metrics(state_action_pairs, reward_model, schedule_state)
+    def compute(self, state_action_pairs, reward_model, schedule_state, segment_meta_pairs=None):
+        metrics = self._compute_metrics(state_action_pairs, reward_model, schedule_state, segment_meta_pairs)
         metrics[self.name] = self._aggregate_metrics(metrics, schedule_state)  # Add the composite metric itself
         return metrics
+
+
+class SegmentProbQuantileFilter(BaseSamplerFilter):
+    """
+    Filters out the bottom `drop_fraction` of pairs by combined segment probability.
+    A pair's score is min(P(segment A), P(segment B)), where P(segment) = exp(sum(log_probs)).
+    """
+
+    def __init__(self, drop_fraction: float, pair_agg_fn: Callable = torch.minimum):
+        self.drop_fraction = drop_fraction
+        self.pair_agg_fn = pair_agg_fn
+
+    @property
+    def name(self) -> str:
+        return "segment_prob_quantile"
+
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState, segment_meta_pairs: list[dict]) -> torch.Tensor:
+        device = state_action_pairs.device
+
+        scores = []
+        for meta_a, meta_b in segment_meta_pairs:
+            logp_a = torch.as_tensor(meta_a['log_probs']).sum()
+            logp_b = torch.as_tensor(meta_b['log_probs']).sum()
+            scores.append(self.pair_agg_fn(logp_a, logp_b))
+        scores = torch.stack(scores).to(device)
+
+        cutoff = torch.quantile(scores, self.drop_fraction)
+        keep_mask = scores > cutoff
+        return keep_mask
 
 
 class Sampler:
@@ -179,19 +208,19 @@ class Sampler:
         return state_actions, gt_rewards, segment_metas
 
 
-    def compute_logging_metrics(self, metrics: dict[str, torch.Tensor], state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState | None = None):
+    def compute_logging_metrics(self, metrics: dict[str, torch.Tensor], state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState | None = None, segment_meta_pairs: list[dict] | None = None):
         for metric in self.logging_metrics:
             if metric.name not in metrics:
-                metrics |= metric.compute(state_action_pairs, reward_model, schedule_state)
+                metrics |= metric.compute(state_action_pairs, reward_model, schedule_state, segment_meta_pairs)
 
         return metrics
 
 
-    def _apply_filters(self, state_action_pairs: torch.Tensor, reward_model: nn.Module | None, schedule_state: BaseScheduleState | None) -> torch.Tensor:
+    def _apply_filters(self, state_action_pairs: torch.Tensor, reward_model: nn.Module | None, schedule_state: BaseScheduleState | None, segment_meta_pairs: list[dict]) -> torch.Tensor:
         device = state_action_pairs.device
         keep_mask = torch.ones(state_action_pairs.shape[0], dtype=torch.bool, device=device)
         for flt in self.filters:
-            mask = flt.compute(state_action_pairs, reward_model, schedule_state)
+            mask = flt.compute(state_action_pairs, reward_model, schedule_state, segment_meta_pairs)
             keep_mask &= mask
 
         kept_indices = torch.nonzero(keep_mask, as_tuple=False).squeeze(-1)
@@ -206,7 +235,8 @@ class Sampler:
         stratified: bool = False,
         reward_model: Callable | None = None,
         schedule_state: BaseScheduleState | None = None,
-        log_metrics: bool = True
+        log_metrics: bool = True,
+        apply_filters: bool = True,
     ):
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
@@ -220,18 +250,19 @@ class Sampler:
         for i in range(0, len(segment_metas), 2):
             segment_meta_pairs.append([segment_metas[i], segment_metas[i + 1]])
 
-        keep_indices = self._apply_filters(state_action_pairs, reward_model, schedule_state)
-        state_action_pairs = state_action_pairs[keep_indices]
-        reward_pairs = reward_pairs[:, keep_indices]
-        segment_meta_pairs = [segment_meta_pairs[i] for i in keep_indices.tolist()]
+        if apply_filters:
+            keep_indices = self._apply_filters(state_action_pairs, reward_model, schedule_state, segment_meta_pairs)
+            state_action_pairs = state_action_pairs[keep_indices]
+            reward_pairs = reward_pairs[:, keep_indices]
+            segment_meta_pairs = [segment_meta_pairs[i] for i in keep_indices.tolist()]
 
         metrics = {}
         if method != 'uniform':
             assert self.sampling_metric
-            metrics = self.sampling_metric.compute(state_action_pairs, reward_model, schedule_state)
+            metrics = self.sampling_metric.compute(state_action_pairs, reward_model, schedule_state, segment_meta_pairs)
 
         if log_metrics:
-            metrics = self.compute_logging_metrics(metrics, state_action_pairs, reward_model, schedule_state)
+            metrics = self.compute_logging_metrics(metrics, state_action_pairs, reward_model, schedule_state, segment_meta_pairs)
 
         if method == 'uniform' or state_action_pairs.shape[0] <= num_samples:
             return state_action_pairs, reward_pairs, metrics, segment_meta_pairs

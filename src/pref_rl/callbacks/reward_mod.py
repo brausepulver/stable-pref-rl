@@ -29,11 +29,12 @@ class RewardModifierCallback(BaseCallback):
 
     def _get_current_step(self):
         maybe_flat_obs = np.array(list(self.model._last_obs.values())) if isinstance(self.model._last_obs, dict) else self.model._last_obs
-        obs = torch.tensor(maybe_flat_obs, dtype=torch.float).reshape(self.training_env.num_envs, -1)
+        obs = torch.tensor(maybe_flat_obs, dtype=torch.float).reshape(self.training_env.num_envs, -1).detach()
         env_actions = self.locals.get('clipped_actions', self.locals['actions'])  # These are the final actions in the same shape as passed to the environment
-        act = torch.tensor(env_actions, dtype=torch.float).reshape(self.training_env.num_envs, -1)
-        gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float).reshape(self.training_env.num_envs, -1)
-        return obs, act, gt_rewards
+        act = torch.tensor(env_actions, dtype=torch.float).reshape(self.training_env.num_envs, -1).detach()
+        gt_rewards = torch.tensor(self.locals['rewards'], dtype=torch.float).reshape(self.training_env.num_envs, -1).detach()
+        log_probs = self.locals.get('log_probs').detach()
+        return obs, act, gt_rewards, log_probs
 
 
     def _on_rollout_start(self):
