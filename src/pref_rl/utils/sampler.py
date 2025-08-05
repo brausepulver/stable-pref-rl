@@ -105,6 +105,25 @@ class CompositeMetric(BaseSamplerMetric):
         return metrics
 
 
+class SegmentProbMetric(BaseSamplerMetric):
+    def __init__(self, pair_agg_fn: Callable = torch.minimum):
+        self.pair_agg_fn = pair_agg_fn
+
+    @property
+    def name(self) -> str:
+        return "segment_prob_quantile"
+
+    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState, segment_meta_pairs: list[dict]) -> torch.Tensor:
+        device = state_action_pairs.device
+        scores = []
+        for meta_a, meta_b in segment_meta_pairs:
+            logp_a = torch.as_tensor(meta_a['log_probs']).sum()
+            logp_b = torch.as_tensor(meta_b['log_probs']).sum()
+            scores.append(self.pair_agg_fn(logp_a, logp_b))
+        scores = torch.stack(scores).to(device)
+        return scores
+
+
 class SegmentProbQuantileFilter(BaseSamplerFilter):
     """
     Filters out the bottom `drop_fraction` of pairs by combined segment probability.
