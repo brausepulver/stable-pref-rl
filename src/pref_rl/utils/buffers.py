@@ -69,7 +69,7 @@ class FeedbackBuffer:
         self.size = 0
 
 
-    def add(self, segments: torch.Tensor, preferences: torch.Tensor, weights: torch.Tensor, segment_metas: list) -> int:
+    def add(self, segments: torch.Tensor, preferences: torch.Tensor, weights: torch.Tensor, segment_metas: list | None = None) -> int:
         num_items = len(segments)
         segments = segments.to(self.device)
         preferences = preferences.to(self.device)
@@ -83,18 +83,21 @@ class FeedbackBuffer:
                 self.segments[start_pos:end_pos] = segments.detach()
                 self.preferences[start_pos:end_pos] = preferences.detach()
                 self.weights[start_pos:end_pos] = weights.detach()
-                self.segment_metas[start_pos:end_pos] = segment_metas
+                if segment_metas:
+                    self.segment_metas[start_pos:end_pos] = segment_metas
             else:
                 first_chunk = self.buffer_size - start_pos
                 self.segments[start_pos:] = segments[:first_chunk].detach()
                 self.preferences[start_pos:] = preferences[:first_chunk].detach()
                 self.weights[start_pos:] = weights[:first_chunk].detach()
-                self.segment_metas[start_pos:] = segment_metas[:first_chunk]
+                if segment_metas:
+                    self.segment_metas[start_pos:] = segment_metas[:first_chunk]
                 if end_pos > 0:
                     self.segments[:end_pos] = segments[first_chunk:].detach()
                     self.preferences[:end_pos] = preferences[first_chunk:].detach()
                     self.weights[:end_pos] = weights[first_chunk:].detach()
-                    self.segment_metas[:end_pos] = segment_metas[first_chunk:]
+                    if segment_metas:
+                        self.segment_metas[:end_pos] = segment_metas[first_chunk:]
 
             self.position += num_items
             self.size = min(self.size + num_items, self.buffer_size)

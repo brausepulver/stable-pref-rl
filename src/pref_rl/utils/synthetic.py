@@ -140,11 +140,13 @@ class FeedbackResamplingSynthesizer(BaseSynthesizer):
         self,
         weight_schedule: Callable | None = None,  # for loss weights, not sampling weights
         alpha: float = 1.0,  # exponential rate over ranks
+        filter_bad_orders: bool = True,
     ):
         self.weight_schedule = (
             weight_schedule if callable(weight_schedule) else ExponentialSchedule(start=1.0, end=1.0, decay=1.0)
         )
         self.alpha = float(alpha)
+        self.filter_bad_orders = filter_bad_orders
 
 
     @staticmethod
@@ -233,7 +235,7 @@ class FeedbackResamplingSynthesizer(BaseSynthesizer):
         # Use only the filled portion
         segments = fb.segments[:fb.size]        # (M, 2, S, D)
         preferences = fb.preferences[:fb.size]  # (M,)
-        seg_ages = fb.segment_ages[:fb.size]    # (M, 2)
+        seg_ages = torch.tensor([[meta['ep_start_timesteps'] for meta in meta_pair] for meta_pair in fb.segment_metas[:fb.size]])    # (M, 2)
 
         winners, losers = self._extract_winners_losers(segments, preferences)
         winner_ages, loser_ages = self._extract_winner_loser_ages(seg_ages, preferences)
@@ -251,19 +253,27 @@ class FeedbackResamplingSynthesizer(BaseSynthesizer):
         pos_weights = self._winner_weights_from_ranks(winner_ranks, K_pos)
 
         # Sample indices with replacement according to weights
-        neg_indices = torch.multinomial(neg_weights, num_samples=num_samples, replacement=True)
-        pos_indices = torch.multinomial(pos_weights, num_samples=num_samples, replacement=True)
+        num_samples_expanded = 10 * num_samples if self.filter_bad_orders else num_samples
+        neg_indices = torch.multinomial(neg_weights, num_samples=num_samples_expanded, replacement=True)
+        pos_indices = torch.multinomial(pos_weights, num_samples=num_samples_expanded, replacement=True)
 
         sampled_neg = losers[neg_indices]           # (N, S, D)
         sampled_pos = winners[pos_indices]          # (N, S, D)
         sampled_neg_ages = loser_ages[neg_indices]  # (N,)
         sampled_pos_ages = winner_ages[pos_indices] # (N,)
 
-        # Build pair tensor: [negative, positive] and labels
         pairs = torch.stack([sampled_neg, sampled_pos], dim=1)  # (N, 2, S, D)
-        preferences_out = torch.ones(num_samples, dtype=torch.float32, device=pairs.device)
 
-        loss_weights = self._calculate_loss_weights(num_samples, state)
+        if self.filter_bad_orders:
+            keep_pair_indices = sampled_neg_ages < sampled_pos_ages
+            selected_pairs = pairs[keep_pair_indices][:num_samples]
+        else:
+            selected_pairs = pairs
+
+        # Build pair tensor: [negative, positive] and labels
+        preferences_out = torch.ones(len(selected_pairs), dtype=torch.float32, device=pairs.device)
+
+        loss_weights = self._calculate_loss_weights(len(selected_pairs), state)
         metrics = self._calculate_metrics(sampled_neg_ages, sampled_pos_ages)
 
-        return pairs, preferences_out, metrics, loss_weights
+        return selected_pairs, preferences_out, metrics, loss_weights
