@@ -240,7 +240,11 @@ class Sampler:
     ):
         method = getattr(self.sampling_metric, 'name', 'uniform')
 
-        num_samples_expanded = num_samples if method == 'uniform' else self.pre_sample_multiplier * num_samples
+        if method == 'uniform' and not apply_filters:
+            num_samples_expanded = num_samples
+        else:
+            num_samples_expanded = self.pre_sample_multiplier * num_samples
+
         num_segments = 2 * num_samples_expanded
         state_actions, gt_rewards, segment_metas = self.sample_segments(episodes, episode_metas, num_segments, stratified)
 
@@ -255,6 +259,11 @@ class Sampler:
             state_action_pairs = state_action_pairs[keep_indices]
             reward_pairs = reward_pairs[:, keep_indices]
             segment_meta_pairs = [segment_meta_pairs[i] for i in keep_indices.tolist()]
+
+            if method == 'uniform':
+                state_action_pairs = state_action_pairs[:num_samples]
+                reward_pairs = reward_pairs[:, :num_samples]
+                segment_meta_pairs = segment_meta_pairs[:num_samples]
 
         metrics = {}
         if method != 'uniform':
