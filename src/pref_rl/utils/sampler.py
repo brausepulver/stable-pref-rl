@@ -106,8 +106,9 @@ class CompositeMetric(BaseSamplerMetric):
 
 
 class SegmentProbMetric(BaseSamplerMetric):
-    def __init__(self, pair_agg_fn: Callable = torch.minimum):
+    def __init__(self, pair_agg_fn: Callable = torch.minimum, direction: int = 1):
         self.pair_agg_fn = pair_agg_fn
+        self.direction = direction
 
     @property
     def name(self) -> str:
@@ -121,7 +122,7 @@ class SegmentProbMetric(BaseSamplerMetric):
             logp_b = torch.as_tensor(meta_b['log_probs']).sum()
             scores.append(self.pair_agg_fn(logp_a, logp_b))
         scores = torch.stack(scores).to(device)
-        return scores
+        return self.direction * scores
 
 
 class SegmentProbQuantileFilter(BaseSamplerFilter):
