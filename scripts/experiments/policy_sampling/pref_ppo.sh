@@ -17,7 +17,7 @@ for direction in 1 -1; do
         outb stage uv run train \
             "${BASE_PARAMS[@]}" \
             "training.seed=${seed}" \
-            "+preset.method.pref.sampler=[{_target_: pref_rl.utils.sampler.SegmentProbMetric, direction: ${direction}}]" \
+            "+preset.method.pref.sampler={_target_: pref_rl.utils.sampler.SegmentProbMetric, direction: ${direction}}" \
             "logging.tags=[pref_ppo, experiment, disagreement, policy_sampling]" \
             "logging.group=pref_ppo/policy_sampling/disagreement/${direction}"
     done

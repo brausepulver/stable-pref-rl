@@ -114,7 +114,9 @@ class SegmentProbMetric(BaseSamplerMetric):
     def name(self) -> str:
         return "segment_prob_quantile"
 
-    def compute(self, state_action_pairs: torch.Tensor, reward_model: nn.Module, schedule_state: BaseScheduleState, segment_meta_pairs: list[dict]) -> torch.Tensor:
+    def compute(self, state_action_pairs, reward_model, schedule_state, segment_meta_pairs=None) -> torch.Tensor:
+        if not segment_meta_pairs:
+            return {}
         device = state_action_pairs.device
         scores = []
         for meta_a, meta_b in segment_meta_pairs:
@@ -122,7 +124,7 @@ class SegmentProbMetric(BaseSamplerMetric):
             logp_b = torch.as_tensor(meta_b['log_probs']).sum()
             scores.append(self.pair_agg_fn(logp_a, logp_b))
         scores = torch.stack(scores).to(device)
-        return self.direction * scores
+        return {self.name: self.direction * scores}
 
 
 class SegmentProbQuantileFilter(BaseSamplerFilter):
