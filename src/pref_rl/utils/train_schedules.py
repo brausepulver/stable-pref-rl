@@ -35,7 +35,8 @@ class BasePrefSchedule(TrainingSchedule):
         """
         if not feed_batch_size and not batch_size_schedule:
             raise ValueError('Either feed_batch_size or batch_size_schedule must be set')
-        
+
+        self.feed_batch_size = feed_batch_size
         self.n_steps_reward = n_steps_reward
         self.n_steps_first_train = n_steps_first_train
         self.n_steps_last_train = n_steps_last_train

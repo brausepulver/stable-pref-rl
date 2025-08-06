@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, ConcatDataset
 
 from .reward_mod import RewardModifierCallback
 from ..utils.buffers import EpisodeBuffer, FeedbackBuffer
-from ..utils.data import MaskedDataset
+from ..utils.data import MaskedDataset, SegmentDataset
 from ..utils.sampler import DisagreementMetric, EntropyMetric, Sampler
 from ..utils.schedules import PrefScheduleState
 from ..utils.synthetic import BaseSynthesizer
@@ -246,7 +246,13 @@ class BasePrefCallback(RewardModifierCallback, ABC):
     def _get_dataset(self, should_train_real: bool, should_train_synth: bool):
         datasets = []
         if should_train_real:
-            datasets.append(MaskedDataset(self.feed_buffer.get_dataset(), 0))
+            feed_dataset = SegmentDataset(
+                self.feed_buffer.segments[self.feed_buffer.size - self.schedule.feed_batch_size:self.feed_buffer.size],
+                self.feed_buffer.preferences[self.feed_buffer.size - self.schedule.feed_batch_size:self.feed_buffer.size],
+                self.feed_buffer.weights[self.feed_buffer.size - self.schedule.feed_batch_size:self.feed_buffer.size],
+                self.feed_buffer.segment_metas[self.feed_buffer.size - self.schedule.feed_batch_size:self.feed_buffer.size]
+            )
+            datasets.append(MaskedDataset(feed_dataset, 0))
         if should_train_synth:
             datasets.append(MaskedDataset(self.synth_buffer.get_dataset(), 1))
         return ConcatDataset(datasets)
