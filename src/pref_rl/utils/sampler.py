@@ -106,7 +106,7 @@ class CompositeMetric(BaseSamplerMetric):
 
 
 class SegmentProbMetric(BaseSamplerMetric):
-    def __init__(self, pair_agg_fn: Callable = torch.minimum, direction: int = 1):
+    def __init__(self, pair_agg_fn: Callable = lambda a, b: (a + b) / 2, direction: int = 1):
         self.pair_agg_fn = pair_agg_fn
         self.direction = direction
 
