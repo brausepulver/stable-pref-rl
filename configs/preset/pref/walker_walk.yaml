@@ -1,0 +1,6 @@
+defaults:
+  - /preset/pref/quadruped_walk@_here_
+
+method:
+  pref:
+    validate_on_held_out: false

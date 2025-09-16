@@ -1,0 +1,3 @@
+name: "dm_control/walker-walk-v0"
+limit_ep_steps: 1000
+normalize: true

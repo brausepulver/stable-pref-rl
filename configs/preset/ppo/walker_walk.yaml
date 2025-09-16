@@ -1,0 +1,8 @@
+defaults:
+  - /preset/ppo/quadruped_walk@_here_
+  - /envs/walker_walk@env
+  - _self_
+
+method:
+  batch_size: 64
+  gae_lambda: 0.92
