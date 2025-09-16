@@ -50,7 +50,7 @@ class EpisodeBuffer:
 
 
     def get_episode_metas(self, return_all: bool = False):
-        running = [torch.stack(ep[1]) for ep in self.running_eps if ep[1]]
+        running = [ep[1] for ep in self.running_eps if ep[1]]
         done = [ep[1] for ep in self.done_eps]
         if self.keep_all_eps and not return_all:
             done = done[-self.n_episodes:]

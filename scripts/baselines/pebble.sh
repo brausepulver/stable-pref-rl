@@ -6,6 +6,7 @@ BASE_PARAMS=(
     "preset.method.pref.max_feed=2000"
     "preset.method.pref.teacher=oracle"
     "preset.method.pref.device=cpu"
+    "training.num_envs=16"
 )
 
 for i in $(seq 1 8); do

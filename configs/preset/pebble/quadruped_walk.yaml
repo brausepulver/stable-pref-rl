@@ -6,13 +6,13 @@ defaults:
 method:
   _target_: pref_rl.methods.pebble.PEBBLE
   learning_starts: 1000
+  n_steps_seed: 1000
+  reset_gradient_steps: 100
 
   unsuper:
-    n_steps_unsuper: 10_000
-    n_epochs_unsuper: 100
+    n_steps_unsuper: 9_000
 
   pref:
-    n_steps_reward: 30_000
     sampler: disagreement
 
     n_epochs_reward: 50
@@ -21,7 +21,11 @@ method:
     batch_size_reward: 128
     reward_model_kwargs:
       net_arch: [256, 256, 256]
+      ensemble_size: 3
       activation_fn:
         _target_: torch.nn.LeakyReLU
       output_fn:
         _target_: torch.nn.Tanh
+
+    schedule:
+      n_steps_reward: 30_000

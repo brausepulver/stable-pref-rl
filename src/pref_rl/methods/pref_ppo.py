@@ -17,21 +17,26 @@ class PrefPPO(PPO):
     }
 
 
-    def __init__(self, *args, run_id: str | None = None, save_callback_data=False, save_episode_data=False, unsuper={}, pref={}, **kwargs):
+    def __init__(self, *args, run_id: str | None = None, save_callback_data=False, save_episode_data=False, n_steps_seed: int = 0, unsuper={}, pref={}, **kwargs):
         super().__init__(*args, _init_setup_model=False, **kwargs)
 
         self.run_id = run_id
         self.save_callback_data = save_callback_data
         self.save_episode_data = save_episode_data
+        self.n_steps_seed = n_steps_seed
         self.unsuper_kwargs = unsuper
         self.pref_kwargs = pref
-        self.unsuper_enabled = self.unsuper_kwargs['n_steps_unsuper'] is not None
+        self.n_steps_unsuper = self.unsuper_kwargs.get('n_steps_unsuper', None)
+        self.unsuper_enabled = self.n_steps_unsuper is not None
 
         if not self.unsuper_enabled:
-            self.n_steps_default = kwargs['n_steps']
+            self.n_steps_default = self.n_steps
             ep_completed = self.env.unwrapped.envs[0].spec.max_episode_steps
             rollout_completed = self.n_steps_default
             self.n_steps = ep_completed + rollout_completed
+
+        self.n_epochs_default = self.n_epochs
+        self.n_epochs_unsuper = self.unsuper_kwargs.pop('n_epochs_unsuper', self.n_epochs_default)
 
         self._setup_model()
         self._setup_callbacks()
@@ -47,7 +52,7 @@ class PrefPPO(PPO):
             **self.pref_kwargs
         )
         if self.unsuper_enabled:
-            self.pref_ppo_callback.schedule.n_steps_first_train = self.unsuper_kwargs['n_steps_unsuper']
+            self.pref_ppo_callback.schedule.n_steps_first_train = self.n_steps_seed + self.n_steps_unsuper
 
         self.unsupervised_callback = UnsupervisedCallback(**self.unsuper_kwargs) if self.unsuper_enabled else None
 
@@ -71,6 +76,12 @@ class PrefPPO(PPO):
 
 
     def train(self):
+        if self.unsuper_enabled and (self.n_steps_seed <= self.num_timesteps < self.n_steps_seed + self.n_steps_unsuper):
+            self.n_epochs = self.n_epochs_unsuper
+
+        if self.unsuper_enabled and self.num_timesteps >= self.n_steps_seed + self.n_steps_unsuper:
+            self.n_epochs = self.n_epochs_default
+
         if not self.unsuper_enabled:
             self.n_steps = self.n_steps_default
             self._truncate_buffer(self.rollout_buffer, self.n_steps)

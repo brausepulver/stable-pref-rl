@@ -12,4 +12,3 @@ for i in $(seq 1 $N_RUNS); do
         'logging.tags=[ppo, baseline]' \
         logging.group=ppo/baseline
 done
-wait
