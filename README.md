@@ -1,4 +1,4 @@
-# pref_rl
+# stable-pref-rl
 
 
 ## Installation
